@@ -10,9 +10,14 @@ internal interface IDomainEventSerializer
 
 internal sealed class DomainEventSerializer : IDomainEventSerializer
 {
+    private static readonly JsonSerializerOptions _jsonSerializerOptions = new()
+    {
+        WriteIndented = false,
+    };
+
     public string Serialize(IDomainEvent domainEvent)
     {
-        return JsonSerializer.Serialize(domainEvent);
+        return JsonSerializer.Serialize(domainEvent, domainEvent.GetType());
     }
 
     public IDomainEvent Deserialize(string json, string assemblyQualifiedType)

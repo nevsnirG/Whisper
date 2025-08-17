@@ -1,12 +1,14 @@
 ﻿using Hermes.Outbox.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
+using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
+using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
 
 namespace Hermes.Outbox.MongoDb;
 public static class IOutboxBuilderExtensions
 {
-    public static IOutboxBuilder AddOutbox(this IOutboxBuilder outboxBuilder, MongoOutboxConfiguration mongoOutboxConfiguration)
+    public static IOutboxBuilder AddMongo(this IOutboxBuilder outboxBuilder, MongoOutboxConfiguration mongoOutboxConfiguration)
     {
         RegisterOutboxRecordClassMap();
 
@@ -26,7 +28,8 @@ public static class IOutboxBuilderExtensions
         BsonClassMap.RegisterClassMap<OutboxRecord>(cm =>
         {
             cm.AutoMap();
-            cm.MapIdMember(u => u.Id);
+            cm.MapIdMember(u => u.Id)
+                .SetSerializer(new GuidSerializer(GuidRepresentation.Standard));
         });
     }
 

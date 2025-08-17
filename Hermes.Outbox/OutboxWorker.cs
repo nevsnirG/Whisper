@@ -46,7 +46,7 @@ internal sealed class OutboxWorker(IOutboxStore outboxStore,
     private async Task<IServiceScope> DispatchDomainEvent(IDomainEvent domainEvent, CancellationToken cancellationToken)
     {
         using var scope = serviceScopeFactory.CreateScope();
-        var dispatchers = scope.ServiceProvider.GetServices<IDispatchDomainEvents>()
+        var dispatchers = scope.ServiceProvider.GetKeyedServices<IDispatchDomainEvents>(IHermesBuilderExtensions.ServiceKey)
             .Where(s => s is not OutboxDispatcher);
 
         foreach (var dispatcher in dispatchers)
