@@ -1,6 +1,8 @@
-﻿namespace Hermes.Outbox.SqlServer;
+﻿using Hermes.Outbox.Abstractions;
 
-internal sealed class SqlServerPersister : IOutboxPersister
+namespace Hermes.Outbox.SqlServer;
+
+internal sealed class SqlServerPersister : IOutboxStore
 {
 
 }

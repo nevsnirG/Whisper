@@ -1,6 +1,8 @@
-﻿namespace Hermes.Outbox.MongoDb;
+﻿using Hermes.Outbox.Abstractions;
 
-internal sealed class MongoDbPersister : IOutboxPersister
+namespace Hermes.Outbox.MongoDb;
+
+internal sealed class MongoDbPersister : IOutboxStore
 {
 
 }

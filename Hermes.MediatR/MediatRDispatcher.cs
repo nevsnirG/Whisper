@@ -1,17 +1,20 @@
 ﻿using Hermes.Abstractions;
 using Hermes.Core;
+using MediatR;
 
 namespace Hermes.MediatR;
-
-internal sealed class MediatRDispatcher : IDispatchDomainEvents
+internal sealed class MediatRDispatcher(IMediator mediator) : IDispatchDomainEvents
 {
-    public Task Dispatch(IDomainEvent domainEvent)
+    public Task Dispatch(IDomainEvent domainEvent, CancellationToken cancellationToken)
     {
-        throw new NotImplementedException();
+        return mediator.Publish(domainEvent, cancellationToken);
     }
 
-    public Task Dispatch(IDomainEvent[] domainEvents)
+    public async Task Dispatch(IDomainEvent[] domainEvents, CancellationToken cancellationToken)
     {
-        throw new NotImplementedException();
+        foreach (var domainEvent in domainEvents)
+        {
+            await mediator.Publish(domainEvent, cancellationToken);
+        }
     }
 }

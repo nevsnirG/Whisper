@@ -4,7 +4,7 @@ namespace Hermes.Abstractions;
 
 public interface IDispatchDomainEvents
 {
-    Task Dispatch(IDomainEvent domainEvent);
+    Task Dispatch(IDomainEvent domainEvent, CancellationToken cancellationToken);
 
-    Task Dispatch(IDomainEvent[] domainEvents);
+    Task Dispatch(IDomainEvent[] domainEvents, CancellationToken cancellationToken);
 }

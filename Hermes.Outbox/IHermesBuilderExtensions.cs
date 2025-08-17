@@ -6,8 +6,12 @@ public static class IHermesBuilderExtensions
 {
     public static IHermesBuilder AddOutbox(this IHermesBuilder hermesBuilder, Action<IOutboxBuilder> configure)
     {
-        hermesBuilder.Services.AddHostedService<OutboxWorker>();
-        hermesBuilder.Services.AddScoped<OutboxDispatcher>();
+        hermesBuilder.Services
+            .AddScoped<OutboxDispatcher>()
+            .AddSingleton(TimeProvider.System)
+            .AddScoped<IDispatchDomainEvents, OutboxDispatcher>()
+            .AddScoped<IDomainEventSerializer, DomainEventSerializer>()
+            .AddHostedService<OutboxWorker>();
         configure?.Invoke(new OutboxBuilder(hermesBuilder.Services));
         return hermesBuilder;
     }
