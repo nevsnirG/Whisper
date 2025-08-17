@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="MongoDB.Driver" Version="[3.0.0,)" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Hermes.Outbox\Hermes.Outbox.csproj" />
   </ItemGroup>
 

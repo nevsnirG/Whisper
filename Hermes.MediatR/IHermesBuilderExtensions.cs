@@ -7,8 +7,7 @@ public static class IHermesBuilderExtensions
     public static IHermesBuilder AddMediatR(this IHermesBuilder builder)
     {
         builder.Services
-            .AddScoped<IDispatchDomainEvents, MediatorDispatcher>()
-            .AddMediatR(c => c.RegisterServicesFromAssemblyContaining<MediatorDispatcher>());
+            .AddScoped<IDispatchDomainEvents, MediatorDispatcher>();
         return builder;
     }
 }

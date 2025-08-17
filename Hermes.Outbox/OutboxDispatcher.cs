@@ -3,7 +3,7 @@ using Hermes.Core;
 using Hermes.Outbox.Abstractions;
 
 namespace Hermes.Outbox;
-internal sealed class OutboxDispatcher(IOutboxStore outboxStore, IDomainEventSerializer domainEventSerializer) : IDispatchDomainEvents
+internal sealed class OutboxDispatcher(IOutboxStore outboxStore, IDomainEventSerializer domainEventSerializer, TimeProvider timeProvider) : IDispatchDomainEvents
 {
     public Task Dispatch(IDomainEvent domainEvent, CancellationToken cancellationToken)
     {
@@ -24,6 +24,7 @@ internal sealed class OutboxDispatcher(IOutboxStore outboxStore, IDomainEventSer
         return new()
         {
             Id = Guid.NewGuid(),
+            EnqueuedAtUtc = timeProvider.GetUtcNow(),
             AssemblyQualifiedType = domainEvent.GetType().AssemblyQualifiedName!,
             Payload = domainEventSerializer.Serialize(domainEvent),
         };
