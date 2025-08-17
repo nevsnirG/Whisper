@@ -3,7 +3,7 @@ using Hermes.Core;
 using MediatR;
 
 namespace Hermes.MediatR;
-internal sealed class MediatRDispatcher(IMediator mediator) : IDispatchDomainEvents
+internal sealed class MediatorDispatcher(IMediator mediator) : IDispatchDomainEvents
 {
     public Task Dispatch(IDomainEvent domainEvent, CancellationToken cancellationToken)
     {
