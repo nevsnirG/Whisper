@@ -4,7 +4,7 @@ public static class DomainEventTracker
 {
     private static readonly AsyncLocal<DomainEventScopeStack> _scopeStack = new();
 
-    public static IDomainEventScope CreateScope()
+    public static Task<IDomainEventScope> CreateScope()
     {
         var stack = GetOrCreateStack();
         var parentScope = stack.Peek();
@@ -16,7 +16,7 @@ public static class DomainEventTracker
             ((DomainEventScope)parentScope).Child = newScope;
 
         stack.Push(newScope);
-        return newScope;
+        return Task.FromResult((IDomainEventScope)newScope);
     }
 
     internal static void ExitScope(IDomainEventScope scope)
