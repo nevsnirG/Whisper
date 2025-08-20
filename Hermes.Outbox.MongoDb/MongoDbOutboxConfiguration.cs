@@ -1,6 +1,6 @@
 ﻿namespace Hermes.Outbox.MongoDb;
 
-public class MongoOutboxConfiguration
+public sealed class MongoDbOutboxConfiguration
 {
     public required string ConnectionString { get; init; }
     public required string DatabaseName { get; init; }

@@ -1,25 +1,32 @@
-﻿using Hermes.Outbox.Abstractions;
-using Microsoft.Extensions.DependencyInjection;
+﻿using Hermes.Outbox;
+using Hermes.Outbox.Abstractions;
+using Hermes.Outbox.MongoDb;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
 
-namespace Hermes.Outbox.MongoDb;
+namespace Microsoft.Extensions.DependencyInjection;
 public static class IOutboxBuilderExtensions
 {
-    public static IOutboxBuilder AddMongo(this IOutboxBuilder outboxBuilder, MongoOutboxConfiguration mongoOutboxConfiguration)
+    public static IOutboxBuilder AddMongoDb(this IOutboxBuilder outboxBuilder, MongoDbOutboxConfiguration mongoDbOutboxConfiguration)
     {
         RegisterOutboxRecordClassMap();
 
-        var mongoClient = new MongoClient(mongoOutboxConfiguration.ConnectionString);
         outboxBuilder.Services
-            .AddScoped<IOutboxStore, MongoDbOutboxStore>(sp =>
+            .AddScoped<IOutboxStore, MongoDbOutboxStore>(static sp =>
             {
-                var outboxCollection = GetCollection(mongoOutboxConfiguration, mongoClient);
+                var mongoClient = sp.GetRequiredService<MongoClient>();
+                var configuration = sp.GetRequiredService<MongoDbOutboxConfiguration>();
+                var database = mongoClient.GetDatabase(configuration.DatabaseName);
+                var outboxCollection = database.GetCollection<OutboxRecord>(configuration.CollectionName);
                 return ActivatorUtilities.CreateInstance<MongoDbOutboxStore>(sp, outboxCollection);
             })
-            .AddSingleton(mongoOutboxConfiguration);
+            .AddSingleton(mongoDbOutboxConfiguration)
+            .AddSingleton(new MongoClient(mongoDbOutboxConfiguration.ConnectionString))
+            .AddTransient<IInstallOutbox, MongoDbOutboxInstaller>()
+            .AddTransient<IUuidProvider, MongoDbUuidProvider>()
+            ;
         return outboxBuilder;
     }
 
@@ -31,23 +38,5 @@ public static class IOutboxBuilderExtensions
             cm.MapIdMember(u => u.Id)
                 .SetSerializer(new GuidSerializer(GuidRepresentation.Standard));
         });
-    }
-
-    private static IMongoCollection<OutboxRecord> GetCollection(MongoOutboxConfiguration mongoOutboxConfiguration, MongoClient mongoClient)
-    {
-        var database = mongoClient.GetDatabase(mongoOutboxConfiguration.DatabaseName);
-        var indexes = new[]
-        {
-            new CreateIndexModel<OutboxRecord>(
-                Builders<OutboxRecord>.IndexKeys.Ascending(x => x.EnqueuedAtUtc),
-                new CreateIndexOptions { Unique = false }),
-            new CreateIndexModel<OutboxRecord>(
-                Builders<OutboxRecord>.IndexKeys.Ascending(x => x.DispatchedAtUtc),
-                new CreateIndexOptions { Unique = false, ExpireAfter = TimeSpan.FromDays(7) }),
-        };
-
-        var outboxCollection = database.GetCollection<OutboxRecord>(mongoOutboxConfiguration.CollectionName);
-        outboxCollection.Indexes.CreateMany(indexes);
-        return outboxCollection;
     }
 }

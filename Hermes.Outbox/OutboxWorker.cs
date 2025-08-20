@@ -8,16 +8,19 @@ namespace Hermes.Outbox;
 internal sealed class OutboxWorker(IOutboxStore outboxStore,
                                    IDomainEventSerializer domainEventSerializer,
                                    TimeProvider timeProvider,
+                                   OutboxInstallerAwaiter outboxInstallerAwaiter,
                                    IServiceScopeFactory serviceScopeFactory) : BackgroundService
 {
-    private const int DelayInSeconds = 1 * 1000;
+    private const int Delay = 1 * 1000;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await outboxInstallerAwaiter.WaitForCompletion(stoppingToken);
+
         while (!stoppingToken.IsCancellationRequested)
         {
             await ProcessNextBatch(stoppingToken);
-            await Task.Delay(DelayInSeconds, stoppingToken);
+            await Task.Delay(Delay, stoppingToken);
         }
     }
 
@@ -25,17 +28,23 @@ internal sealed class OutboxWorker(IOutboxStore outboxStore,
     {
         var outboxRecordBatch = await outboxStore.ReadNextBatch(cancellationToken);
 
+        if (outboxRecordBatch is [])
+        {
+            return;
+        }
+
         foreach (var outboxRecord in outboxRecordBatch)
         {
             await ProcessOutboxRecord(outboxRecord, cancellationToken);
         }
+
+        await MarkAsDispatched(outboxRecordBatch, cancellationToken);
     }
 
     private async Task ProcessOutboxRecord(OutboxRecord outboxRecord, CancellationToken cancellationToken)
     {
         var domainEvent = DeserializeDomainEvent(outboxRecord);
         await DispatchDomainEvent(domainEvent, cancellationToken);
-        await UpdateDispatchedAtUtc(outboxRecord, cancellationToken);
     }
 
     private IDomainEvent DeserializeDomainEvent(OutboxRecord outboxRecord)
@@ -57,9 +66,13 @@ internal sealed class OutboxWorker(IOutboxStore outboxStore,
         return scope;
     }
 
-    private async Task UpdateDispatchedAtUtc(OutboxRecord outboxRecord, CancellationToken cancellationToken)
+    private async Task MarkAsDispatched(OutboxRecord[] outboxRecordBatch, CancellationToken cancellationToken)
     {
-        outboxRecord.DispatchedAtUtc = timeProvider.GetUtcNow();
-        await outboxStore.Update(outboxRecord, cancellationToken);
+        foreach (var outboxRecord in outboxRecordBatch)
+        {
+            outboxRecord.DispatchedAtUtc = timeProvider.GetUtcNow();
+        }
+
+        await outboxStore.SetDispatchedAt(outboxRecordBatch, cancellationToken);
     }
 }

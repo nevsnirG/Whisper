@@ -20,23 +20,28 @@ internal sealed class MongoDbOutboxStore(IMongoCollection<OutboxRecord> outboxCo
 
     public async Task<OutboxRecord[]> ReadNextBatch(CancellationToken cancellationToken)
     {
-        var sort = Builders<OutboxRecord>.Sort.Ascending(or => or.EnqueuedAtUtc);
-        var options = new FindOptions<OutboxRecord, OutboxRecord>()
-        {
-            AllowDiskUse = true,
-            Limit = 10,
-            AllowPartialResults = true,
-            Sort = sort,
-        };
-        var cursor = await outboxCollection.FindAsync(or => or.DispatchedAtUtc == null, options, cancellationToken);
-        return [.. await cursor.ToListAsync(cancellationToken)];
+        var cursor = await outboxCollection.Find(x => x.DispatchedAtUtc == null)
+            .SortBy(x => x.Id)
+            .Limit(10)
+            .ToListAsync(cancellationToken);
+
+        return [.. cursor];
     }
 
-    public Task Update(OutboxRecord outboxRecord, CancellationToken cancellationToken)
+    public Task SetDispatchedAt(OutboxRecord[] outboxRecordBatch, CancellationToken cancellationToken)
     {
-        var filter = Builders<OutboxRecord>.Filter.Eq(or => or.Id, outboxRecord.Id);
-        var update = Builders<OutboxRecord>.Update.Set(or => or.DispatchedAtUtc, outboxRecord.DispatchedAtUtc);
-        var options = new UpdateOptions { IsUpsert = false };
-        return outboxCollection.UpdateOneAsync(filter, update, options, cancellationToken);
+        var updateOneModels = new List<UpdateOneModel<OutboxRecord>>(outboxRecordBatch.Length);
+
+        foreach (var outboxRecord in outboxRecordBatch)
+        {
+            var filter = Builders<OutboxRecord>.Filter.Eq(or => or.Id, outboxRecord.Id);
+            var update = Builders<OutboxRecord>.Update.Set(or => or.DispatchedAtUtc, outboxRecord.DispatchedAtUtc);
+            updateOneModels.Add(new UpdateOneModel<OutboxRecord>(filter, update));
+        }
+
+        return outboxCollection.BulkWriteAsync(updateOneModels, new BulkWriteOptions
+        {
+            IsOrdered = false
+        }, cancellationToken);
     }
 }

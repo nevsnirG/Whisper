@@ -1,6 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection;
-
-namespace Hermes.Outbox;
+﻿namespace Microsoft.Extensions.DependencyInjection;
 public interface IOutboxBuilder
 {
     IServiceCollection Services { get; }

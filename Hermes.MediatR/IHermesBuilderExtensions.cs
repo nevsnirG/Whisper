@@ -1,7 +1,7 @@
 ﻿using Hermes.Abstractions;
-using Microsoft.Extensions.DependencyInjection;
+using Hermes.MediatR;
 
-namespace Hermes.MediatR;
+namespace Microsoft.Extensions.DependencyInjection;
 public static class IHermesBuilderExtensions
 {
     public static IHermesBuilder AddMediatR(this IHermesBuilder builder)

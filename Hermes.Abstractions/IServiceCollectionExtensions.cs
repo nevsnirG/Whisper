@@ -1,6 +1,6 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+﻿using Hermes.Abstractions;
 
-namespace Hermes.Abstractions;
+namespace Microsoft.Extensions.DependencyInjection;
 public static class IServiceCollectionExtensions
 {
     public static IServiceCollection AddHermes(this IServiceCollection services, Action<IHermesBuilder> configure)

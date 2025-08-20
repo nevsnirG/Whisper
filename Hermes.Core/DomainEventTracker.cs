@@ -50,7 +50,7 @@ public static class DomainEventTracker
     }
 
     private static IReadOnlyCollection<IDomainEvent> EmptyCollection() =>
-        new List<IDomainEvent>(0).AsReadOnly();
+        new List<IDomainEvent>(0).AsReadOnly() as IReadOnlyCollection<IDomainEvent>;
 
     private static DomainEventScopeStack GetOrCreateStack()
     {

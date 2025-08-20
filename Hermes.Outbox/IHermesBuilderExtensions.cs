@@ -1,8 +1,8 @@
 ﻿using Hermes.Abstractions;
-using Microsoft.Extensions.DependencyInjection;
+using Hermes.Outbox;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
-namespace Hermes.Outbox;
+namespace Microsoft.Extensions.DependencyInjection;
 public static class IHermesBuilderExtensions
 {
     internal const string ServiceKey = "innerDispatcher";
@@ -19,10 +19,20 @@ public static class IHermesBuilderExtensions
             AddKeyedFromDescriptor(hermesBuilder.Services, serviceDescriptor, ServiceKey);
         }
         hermesBuilder.Services
-            .AddScoped<OutboxDispatcher>()
             .AddSingleton(TimeProvider.System)
-            .AddScoped<IDispatchDomainEvents, OutboxDispatcher>()
+            .AddSingleton<OutboxInstallerAwaiter>()
+            .AddScoped<OutboxDispatcher>()
+            .AddScoped<IDispatchDomainEvents>(static sp =>
+            {
+                var awaiter = sp.GetRequiredService<OutboxInstallerAwaiter>();
+                var inner = sp.GetRequiredService<OutboxDispatcher>();
+
+                return awaiter.IsReady
+                    ? inner
+                    : new BlockingOutboxDispatcher(awaiter, inner);
+            })
             .AddScoped<IDomainEventSerializer, DomainEventSerializer>()
+            .AddHostedService<OutboxInstaller>()
             .AddHostedService<OutboxWorker>();
         configure?.Invoke(new OutboxBuilder(hermesBuilder.Services));
         return hermesBuilder;
