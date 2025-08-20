@@ -17,7 +17,7 @@ internal sealed class DomainEventSerializer : IDomainEventSerializer
 
     public string Serialize(IDomainEvent domainEvent)
     {
-        return JsonSerializer.Serialize(domainEvent, domainEvent.GetType());
+        return JsonSerializer.Serialize(domainEvent, domainEvent.GetType(), _jsonSerializerOptions);
     }
 
     public IDomainEvent Deserialize(string json, string assemblyQualifiedType)
@@ -29,6 +29,6 @@ internal sealed class DomainEventSerializer : IDomainEventSerializer
             throw new InvalidOperationException($"{assemblyQualifiedType} is not assignable to {typeof(IDomainEvent).AssemblyQualifiedName}.");
         }
 
-        return (JsonSerializer.Deserialize(json, type) as IDomainEvent)!;
+        return (JsonSerializer.Deserialize(json, type, _jsonSerializerOptions) as IDomainEvent)!;
     }
 }
