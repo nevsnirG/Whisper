@@ -25,6 +25,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Tests", "Tests", "{379E4CA3
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Core.UnitTests", "Hermes.Core.UnitTests\Hermes.Core.UnitTests.csproj", "{17435C31-E2BA-3A51-AD69-3784AFD81712}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Outbox.MongoDb.NServiceBus", "Hermes.Outbox.MongoDb.NServiceBus\Hermes.Outbox.MongoDb.NServiceBus.csproj", "{AA34DC83-A870-439A-93D9-7BFF1B8BFA39}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -63,6 +65,10 @@ Global
 		{17435C31-E2BA-3A51-AD69-3784AFD81712}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{17435C31-E2BA-3A51-AD69-3784AFD81712}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{17435C31-E2BA-3A51-AD69-3784AFD81712}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AA34DC83-A870-439A-93D9-7BFF1B8BFA39}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AA34DC83-A870-439A-93D9-7BFF1B8BFA39}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AA34DC83-A870-439A-93D9-7BFF1B8BFA39}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AA34DC83-A870-439A-93D9-7BFF1B8BFA39}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -73,6 +79,7 @@ Global
 		{766C63DE-67D8-4E0B-B13F-451494C11D93} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 		{884093D3-ACE8-4A25-A5CD-CF9B77FB92B9} = {A4B1B04B-ECFA-4070-AFB5-81CBFE63E098}
 		{17435C31-E2BA-3A51-AD69-3784AFD81712} = {379E4CA3-E0DD-42C5-9207-1E05801DBD65}
+		{AA34DC83-A870-439A-93D9-7BFF1B8BFA39} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {12CF64E3-A275-41C8-BCC9-B28D1E3C4D33}

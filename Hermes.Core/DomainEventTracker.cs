@@ -40,17 +40,14 @@ public static class DomainEventTracker
     public static IReadOnlyCollection<IDomainEvent> Peek()
     {
         var deepestScopeRef = GetOrCreateStack().Peek();
-        return deepestScopeRef?.Peek() ?? EmptyCollection();
+        return deepestScopeRef?.Peek() ?? [];
     }
 
     public static IReadOnlyCollection<IDomainEvent> GetAndClearEvents()
     {
         var deepestScopeRef = GetOrCreateStack().Peek();
-        return deepestScopeRef?.GetAndClearEvents() ?? EmptyCollection();
+        return deepestScopeRef?.GetAndClearEvents() ?? [];
     }
-
-    private static IReadOnlyCollection<IDomainEvent> EmptyCollection() =>
-        new List<IDomainEvent>(0).AsReadOnly() as IReadOnlyCollection<IDomainEvent>;
 
     private static DomainEventScopeStack GetOrCreateStack()
     {
