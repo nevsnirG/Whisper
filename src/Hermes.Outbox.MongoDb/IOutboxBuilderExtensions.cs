@@ -16,10 +16,7 @@ public static class IOutboxBuilderExtensions
         outboxBuilder.Services
             .AddScoped<IOutboxStore, MongoDbOutboxStore>(static sp =>
             {
-                var mongoClient = sp.GetRequiredService<MongoClient>();
-                var configuration = sp.GetRequiredService<MongoDbOutboxConfiguration>();
-                var database = mongoClient.GetDatabase(configuration.DatabaseName);
-                var outboxCollection = database.GetCollection<OutboxRecord>(configuration.CollectionName);
+                var outboxCollection = sp.GetOutboxCollection();
                 return ActivatorUtilities.CreateInstance<MongoDbOutboxStore>(sp, outboxCollection);
             })
             .AddSingleton(mongoDbOutboxConfiguration)
@@ -29,6 +26,14 @@ public static class IOutboxBuilderExtensions
             .AddScoped<IMongoSessionProvider, EmptyMongoSessionProvider>()
             ;
         return outboxBuilder;
+    }
+
+    private static IMongoCollection<OutboxRecord> GetOutboxCollection(this IServiceProvider serviceProvider)
+    {
+        var mongoClient = serviceProvider.GetRequiredService<MongoClient>();
+        var configuration = serviceProvider.GetRequiredService<MongoDbOutboxConfiguration>();
+        var database = mongoClient.GetDatabase(configuration.DatabaseName);
+        return database.GetCollection<OutboxRecord>(configuration.CollectionName);
     }
 
     private static void RegisterOutboxRecordClassMap()
