@@ -12,6 +12,7 @@ public static class IOutboxBuilderExtensions
             .AddSingleton(sqlOutboxConfiguration)
             .AddTransient<IInstallOutbox, SqlOutboxInstaller>()
             .AddTransient<IUuidProvider, SqlServerUuidProvider>()
+            .AddTransient<IConnectionLeaseProvider, SqlOutboxConfigurationConnectionLeaseProvider>()
             ;
         return outboxBuilder;
     }
