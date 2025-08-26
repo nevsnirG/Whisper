@@ -2,11 +2,14 @@
 using MongoDB.Driver;
 
 namespace Hermes.Outbox.MongoDb;
-internal sealed class MongoDbOutboxStore(IMongoCollection<OutboxRecord> outboxCollection) : IOutboxStore
+internal sealed class MongoDbOutboxStore(IMongoCollection<OutboxRecord> outboxCollection, IMongoSessionProvider mongoSessionProvider) : IOutboxStore
 {
     public Task Add(OutboxRecord outboxRecord, CancellationToken cancellationToken)
     {
-        return outboxCollection.InsertOneAsync(outboxRecord, new InsertOneOptions(), cancellationToken);
+        if (mongoSessionProvider.Session is not null)
+            return outboxCollection.InsertOneAsync(mongoSessionProvider.Session, outboxRecord, new InsertOneOptions(), cancellationToken);
+        else
+            return outboxCollection.InsertOneAsync(outboxRecord, new InsertOneOptions(), cancellationToken);
     }
 
     public Task Add(OutboxRecord[] outboxRecords, CancellationToken cancellationToken)
@@ -15,7 +18,10 @@ internal sealed class MongoDbOutboxStore(IMongoCollection<OutboxRecord> outboxCo
         {
             IsOrdered = false
         };
-        return outboxCollection.InsertManyAsync(outboxRecords, options, cancellationToken);
+        if (mongoSessionProvider.Session is not null)
+            return outboxCollection.InsertManyAsync(mongoSessionProvider.Session, outboxRecords, options, cancellationToken);
+        else
+            return outboxCollection.InsertManyAsync(outboxRecords, options, cancellationToken);
     }
 
     public async Task<OutboxRecord[]> ReadNextBatch(CancellationToken cancellationToken)
@@ -39,9 +45,14 @@ internal sealed class MongoDbOutboxStore(IMongoCollection<OutboxRecord> outboxCo
             updateOneModels.Add(new UpdateOneModel<OutboxRecord>(filter, update));
         }
 
-        return outboxCollection.BulkWriteAsync(updateOneModels, new BulkWriteOptions
+        var bulkWriteOptions = new BulkWriteOptions
         {
             IsOrdered = false
-        }, cancellationToken);
+        };
+
+        if (mongoSessionProvider.Session is not null)
+            return outboxCollection.BulkWriteAsync(mongoSessionProvider.Session, updateOneModels, bulkWriteOptions, cancellationToken);
+        else
+            return outboxCollection.BulkWriteAsync(updateOneModels, bulkWriteOptions, cancellationToken);
     }
 }

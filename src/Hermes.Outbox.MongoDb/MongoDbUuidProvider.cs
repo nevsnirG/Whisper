@@ -5,6 +5,6 @@ internal sealed class MongoDbUuidProvider : IUuidProvider
 {
     public Guid Provide()
     {
-        return Uuid.NewDatabaseFriendly(UUIDNext.Database.Other);
+        return Uuid.NewDatabaseFriendly(Database.Other);
     }
 }
