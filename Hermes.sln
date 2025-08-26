@@ -3,33 +3,33 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.14.36212.18
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Core", "Hermes.Core\Hermes.Core.csproj", "{42293632-1016-4581-8F81-61A6E7087229}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Core", "src\Hermes.Core\Hermes.Core.csproj", "{42293632-1016-4581-8F81-61A6E7087229}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Abstractions", "Hermes.Abstractions\Hermes.Abstractions.csproj", "{E3AF3A48-0045-4903-BB12-ACEF86121471}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Abstractions", "src\Hermes.Abstractions\Hermes.Abstractions.csproj", "{E3AF3A48-0045-4903-BB12-ACEF86121471}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Outbox", "Hermes.Outbox\Hermes.Outbox.csproj", "{F09AA794-9516-4881-B738-F58E534D0A4A}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Outbox", "src\Hermes.Outbox\Hermes.Outbox.csproj", "{F09AA794-9516-4881-B738-F58E534D0A4A}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Outbox", "Outbox", "{02EA681E-C7D8-13C7-8484-4AC65E1B71E8}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Outbox.MongoDb", "Hermes.Outbox.MongoDb\Hermes.Outbox.MongoDb.csproj", "{8D3C9D4F-5F36-423B-850C-3310C7F812AB}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Outbox.MongoDb", "src\Hermes.Outbox.MongoDb\Hermes.Outbox.MongoDb.csproj", "{8D3C9D4F-5F36-423B-850C-3310C7F812AB}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Outbox.SqlServer", "Hermes.Outbox.SqlServer\Hermes.Outbox.SqlServer.csproj", "{766C63DE-67D8-4E0B-B13F-451494C11D93}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Outbox.SqlServer", "src\Hermes.Outbox.SqlServer\Hermes.Outbox.SqlServer.csproj", "{766C63DE-67D8-4E0B-B13F-451494C11D93}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Dispatchers", "Dispatchers", "{A4B1B04B-ECFA-4070-AFB5-81CBFE63E098}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.MediatR", "Hermes.MediatR\Hermes.MediatR.csproj", "{884093D3-ACE8-4A25-A5CD-CF9B77FB92B9}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.MediatR", "src\Hermes.MediatR\Hermes.MediatR.csproj", "{884093D3-ACE8-4A25-A5CD-CF9B77FB92B9}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Test", "Test\Test.csproj", "{3C62B735-42DE-4449-9284-0E1EB775069C}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TestHost", "TestHost\TestHost.csproj", "{3C62B735-42DE-4449-9284-0E1EB775069C}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Tests", "Tests", "{379E4CA3-E0DD-42C5-9207-1E05801DBD65}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "test", "test", "{379E4CA3-E0DD-42C5-9207-1E05801DBD65}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Core.UnitTests", "Hermes.Core.UnitTests\Hermes.Core.UnitTests.csproj", "{17435C31-E2BA-3A51-AD69-3784AFD81712}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Core.UnitTests", "test\Hermes.Core.UnitTests\Hermes.Core.UnitTests.csproj", "{17435C31-E2BA-3A51-AD69-3784AFD81712}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Outbox.MongoDb.NServiceBus", "Hermes.Outbox.MongoDb.NServiceBus\Hermes.Outbox.MongoDb.NServiceBus.csproj", "{AA34DC83-A870-439A-93D9-7BFF1B8BFA39}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Outbox.MongoDb.NServiceBus", "src\Hermes.Outbox.MongoDb.NServiceBus\Hermes.Outbox.MongoDb.NServiceBus.csproj", "{AA34DC83-A870-439A-93D9-7BFF1B8BFA39}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.MediatR.UnitTests", "Hermes.MediatR.UnitTests\Hermes.MediatR.UnitTests.csproj", "{C0E9222D-B7C3-45B8-9BE4-4C29E119E9BD}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.MediatR.UnitTests", "test\Hermes.MediatR.UnitTests\Hermes.MediatR.UnitTests.csproj", "{C0E9222D-B7C3-45B8-9BE4-4C29E119E9BD}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Src", "Src", "{936A0B01-8352-4E55-9194-DAD4D379EA49}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{936A0B01-8352-4E55-9194-DAD4D379EA49}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
