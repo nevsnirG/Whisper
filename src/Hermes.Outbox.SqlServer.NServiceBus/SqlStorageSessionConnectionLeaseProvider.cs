@@ -1,14 +1,13 @@
 ﻿using Microsoft.Data.SqlClient;
-using NServiceBus.Persistence;
+using NServiceBus.Persistence.Sql;
 
 namespace Hermes.Outbox.SqlServer.NServiceBus;
-internal sealed class SynchronizedStorageSessionConnectionLeaseProvider(ISynchronizedStorageSession synchronizedStorageSession) : IConnectionLeaseProvider
+internal sealed class SqlStorageSessionConnectionLeaseProvider(ISqlStorageSession sqlStorageSession) : IConnectionLeaseProvider
 {
     public ValueTask<IConnectionLease> Provide(CancellationToken cancellationToken)
     {
-        var sqlSession = synchronizedStorageSession.SqlPersistenceSession();
-        var connection = (SqlConnection)sqlSession.Connection;
-        var transaction = (SqlTransaction)sqlSession.Transaction;
+        var connection = (SqlConnection)sqlStorageSession.Connection;
+        var transaction = (SqlTransaction)sqlStorageSession.Transaction;
         var connectionLease = new ConnectionLease(connection, transaction);
         return ValueTask.FromResult<IConnectionLease>(connectionLease);
     }
