@@ -43,7 +43,7 @@ Traditional domain event patterns often force you to:
 | **Hermes.Outbox.MongoDb.NServiceBus** | Adapter to reuse the NServiceBus **Mongo** storage session |
 | **Hermes.Outbox.SqlServer.NServiceBus** | Adapter to reuse the NServiceBus **SQL** storage session |
 
-> Licensed under **GPL-3.0** (license file is already included in the repository).
+> Licensed under **GPL-3.0**.
 
 ---
 
@@ -111,8 +111,6 @@ When you call `b.AddMediatR()` inside the Hermes builder, Hermes registers:
 - An `IDispatchDomainEvents` implementation that publishes via `IMediator`.
 - A **MediatR pipeline behavior** that **automatically retrieves and dispatches** all raised domain events after each request.
 
-You do **not** need to write or register your own behavior.
-
 ```csharp
 using Hermes.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
@@ -127,7 +125,7 @@ var services = new ServiceCollection()
 
 ---
 
-## Outbox & transactions (optional)
+## Outbox & transactions
 
 Hermes provides an **outbox** for reliable, asynchronous dispatch:
 
