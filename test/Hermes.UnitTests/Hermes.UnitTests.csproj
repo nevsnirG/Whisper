@@ -22,6 +22,6 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<ProjectReference Include="..\..\src\Hermes.Core\Hermes.Core.csproj" />
+		<ProjectReference Include="..\..\src\Hermes.Core\Hermes.csproj" />
 	</ItemGroup>
 </Project>

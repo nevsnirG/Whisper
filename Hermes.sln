@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.14.36212.18
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Core", "src\Hermes.Core\Hermes.Core.csproj", "{42293632-1016-4581-8F81-61A6E7087229}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes", "src\Hermes\Hermes.csproj", "{42293632-1016-4581-8F81-61A6E7087229}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Abstractions", "src\Hermes.Abstractions\Hermes.Abstractions.csproj", "{E3AF3A48-0045-4903-BB12-ACEF86121471}"
 EndProject
@@ -23,7 +23,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TestHost", "TestHost\TestHo
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "test", "test", "{379E4CA3-E0DD-42C5-9207-1E05801DBD65}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Core.UnitTests", "test\Hermes.Core.UnitTests\Hermes.Core.UnitTests.csproj", "{17435C31-E2BA-3A51-AD69-3784AFD81712}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.UnitTests", "test\Hermes.UnitTests\Hermes.UnitTests.csproj", "{17435C31-E2BA-3A51-AD69-3784AFD81712}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Outbox.MongoDb.NServiceBus", "src\Hermes.Outbox.MongoDb.NServiceBus\Hermes.Outbox.MongoDb.NServiceBus.csproj", "{AA34DC83-A870-439A-93D9-7BFF1B8BFA39}"
 EndProject

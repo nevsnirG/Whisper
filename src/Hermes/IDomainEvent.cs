@@ -1,3 +1,3 @@
-﻿namespace Hermes.Core;
+﻿namespace Hermes;
 
 public interface IDomainEvent { }

@@ -1,5 +1,4 @@
 ﻿using Hermes.Abstractions;
-using Hermes.Core;
 using Hermes.Outbox.Abstractions;
 
 namespace Hermes.Outbox;

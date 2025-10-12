@@ -1,4 +1,4 @@
-﻿namespace Hermes.Core;
+﻿namespace Hermes;
 public interface IDomainEventScope : IDisposable
 {
     int Id { get; }

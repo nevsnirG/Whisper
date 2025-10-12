@@ -1,5 +1,4 @@
-﻿using Hermes.Core;
-using System.Text.Json;
+﻿using System.Text.Json;
 
 namespace Hermes.Outbox;
 internal interface IDomainEventSerializer

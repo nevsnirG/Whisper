@@ -1,4 +1,4 @@
-﻿namespace Hermes.Core;
+﻿namespace Hermes;
 
 internal sealed class DomainEventScopeStack
 {
@@ -20,9 +20,7 @@ internal sealed class DomainEventScopeStack
         if (_scopeStack.TryPeek(out var deepestScopeRef))
         {
             if (deepestScopeRef.TryGetTarget(out var deepestScope))
-            {
                 return deepestScope;
-            }
             else
             {
                 _scopeStack.Pop();
@@ -40,9 +38,7 @@ internal sealed class DomainEventScopeStack
         if (_scopeStack.TryPop(out var deepestScopeRef))
         {
             if (deepestScopeRef.TryGetTarget(out var deepestScope))
-            {
                 return deepestScope;
-            }
             else
             {
                 return Pop();

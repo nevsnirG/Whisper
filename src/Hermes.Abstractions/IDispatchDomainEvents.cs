@@ -1,6 +1,4 @@
-﻿using Hermes.Core;
-
-namespace Hermes.Abstractions;
+﻿namespace Hermes.Abstractions;
 
 public interface IDispatchDomainEvents
 {

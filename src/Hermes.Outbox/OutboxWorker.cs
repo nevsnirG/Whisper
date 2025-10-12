@@ -1,5 +1,4 @@
 ﻿using Hermes.Abstractions;
-using Hermes.Core;
 using Hermes.Outbox.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
