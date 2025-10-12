@@ -1,5 +1,4 @@
-﻿using Hermes.Core;
-using MediatR;
+﻿using MediatR;
 using NSubstitute;
 
 namespace Hermes.MediatR.UnitTests;

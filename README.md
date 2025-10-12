@@ -34,7 +34,7 @@ Traditional domain event patterns often force you to:
 
 | Package | Purpose |
 | --- | --- |
-| **Hermes.Core** | Core tracking logic (`DomainEventTracker`, `IDomainEvent`, scopes) |
+| **Hermes** | Core tracking logic (`DomainEventTracker`, `IDomainEvent`, scopes) |
 | **Hermes.Abstractions** | Shared contracts (`IHermesBuilder`, `IDispatchDomainEvents`) |
 | **Hermes.MediatR** | MediatR integration — **automatically** dispatches raised events after each request |
 | **Hermes.Outbox** | Outbox infrastructure + background worker and installer |
@@ -67,7 +67,7 @@ Your domain never exposes an events collection and never learns about dispatchin
 ### 1) Define a domain event
 
 ```csharp
-using Hermes.Core;
+using Hermes;
 
 public sealed record OrderApproved(Guid OrderId) : IDomainEvent;
 ```
@@ -75,7 +75,7 @@ public sealed record OrderApproved(Guid OrderId) : IDomainEvent;
 ### 2) Raise it from anywhere in the domain
 
 ```csharp
-using Hermes.Core;
+using Hermes;
 
 public class Order
 {
@@ -94,7 +94,7 @@ public class Order
 If you want isolation per request/unit of work, create a scope. Events raised inside are collected and can be read/cleared as needed:
 
 ```csharp
-using Hermes.Core;
+using Hermes;
 
 using var scope = await DomainEventTracker.CreateScope();
 // ... domain operations that raise events
@@ -253,7 +253,7 @@ b.AddOutbox(ob =>
 ## Clean Architecture fit
 
 - **Domain**  
-  References only `Hermes.Core`. Raises events via `DomainEventTracker.RaiseDomainEvent(...)`.  
+  References only `Hermes`. Raises events via `DomainEventTracker.RaiseDomainEvent(...)`.  
   No `Events` collection, no knowledge of dispatching or outbox.
 
 - **Application**  
@@ -299,7 +299,7 @@ public static IServiceCollection AddHermes(
 
 ## Core API reference
 
-### `DomainEventTracker` (Hermes.Core)
+### `DomainEventTracker` (Hermes)
 
 | Method | Description |
 | --- | --- |

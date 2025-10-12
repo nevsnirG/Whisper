@@ -1,6 +1,6 @@
 ﻿using System.Collections;
 
-namespace Hermes.Core;
+namespace Hermes;
 internal sealed class DomainEventBag : IEnumerable<IDomainEvent>
 {
     private readonly List<IDomainEvent> _domainEvents = [];
