@@ -1,5 +1,4 @@
 ﻿using MediatR;
-using NSubstitute;
 
 namespace Hermes.MediatR.UnitTests;
 public class MediatorDispatcherTests
