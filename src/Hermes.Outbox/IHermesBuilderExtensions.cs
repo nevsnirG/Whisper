@@ -21,6 +21,7 @@ public static class IHermesBuilderExtensions
         hermesBuilder.Services
             .AddSingleton(TimeProvider.System)
             .AddSingleton<OutboxInstallerAwaiter>()
+            .AddTransient<IUuidProvider, DefaultUuidProvider>()
             .AddScoped<OutboxDispatcher>()
             .AddScoped<IDispatchDomainEvents>(static sp =>
             {

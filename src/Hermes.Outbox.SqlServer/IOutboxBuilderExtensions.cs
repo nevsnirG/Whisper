@@ -1,6 +1,7 @@
 ﻿using Hermes.Outbox;
 using Hermes.Outbox.Abstractions;
 using Hermes.Outbox.SqlServer;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Microsoft.Extensions.DependencyInjection;
 public static class IOutboxBuilderExtensions

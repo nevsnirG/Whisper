@@ -22,7 +22,6 @@ public static class IOutboxBuilderExtensions
             .AddSingleton(mongoDbOutboxConfiguration)
             .AddSingleton(new MongoClient(mongoDbOutboxConfiguration.ConnectionString))
             .AddTransient<IInstallOutbox, MongoDbOutboxInstaller>()
-            .AddTransient<IUuidProvider, MongoDbUuidProvider>()
             .AddScoped<IMongoSessionProvider, EmptyMongoSessionProvider>()
             ;
         return outboxBuilder;

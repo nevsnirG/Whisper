@@ -11,7 +11,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Hermes.Core\Hermes.csproj" />
+    <ProjectReference Include="..\Hermes\Hermes.csproj" />
   </ItemGroup>
 
 </Project>
