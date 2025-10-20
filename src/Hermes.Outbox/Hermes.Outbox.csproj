@@ -17,6 +17,7 @@
 
 	<ItemGroup>
 		<InternalsVisibleTo Include="Hermes.Outbox.UnitTests" />
+		<InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
 	</ItemGroup>
 
 </Project>
