@@ -19,10 +19,10 @@ internal sealed class OutboxWorker(IOutboxStore outboxStore,
         while (!stoppingToken.IsCancellationRequested)
         {
             await ProcessNextBatch(stoppingToken);
-#pragma warning disable CA2016 // Forward the 'CancellationToken' parameter to methods
+#pragma warning disable CA2016
             await Task.Delay(Delay, stoppingToken)
                 .ContinueWith(_ => { });
-#pragma warning restore CA2016 // Forward the 'CancellationToken' parameter to methods
+#pragma warning restore CA2016
         }
     }
 

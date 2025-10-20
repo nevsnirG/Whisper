@@ -32,7 +32,7 @@ public class OutboxWorkerTests
     {
         var outboxRecord = new OutboxRecord()
         {
-            Id = Guid.CreateVersion7(),
+            Id = Guid.NewGuid(),
             AssemblyQualifiedType = "SomeType",
             EnqueuedAtUtc = DateTimeOffset.UtcNow,
             DispatchedAtUtc = null,

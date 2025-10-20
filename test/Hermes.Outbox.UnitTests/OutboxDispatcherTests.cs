@@ -18,7 +18,7 @@ public class OutboxDispatcherTests
             .Returns("serialized");
         var timeProvider = new FakeTimeProvider();
         var uuidProvider = Substitute.For<IUuidProvider>();
-        var guid = Guid.CreateVersion7();
+        var guid = Guid.NewGuid();
         uuidProvider.Provide()
             .Returns(guid);
         var domainEvent = new TestEvent();
