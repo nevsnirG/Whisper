@@ -23,7 +23,7 @@ public class IHermesBuilderExtensionsTests
     }
 
     [Fact]
-    public async Task AddOutbox_WhenAwaiterReady_RegistersNonBlockingDispatcher()
+    public void AddOutbox_WhenAwaiterReady_RegistersNonBlockingDispatcher()
     {
         var serviceCollection = new ServiceCollection() as IServiceCollection;
         serviceCollection.AddHermes(b => b.AddOutbox(b => { }));
