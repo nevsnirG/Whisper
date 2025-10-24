@@ -1,10 +1,7 @@
-﻿using UUIDNext;
+﻿using Hermes.Outbox.Abstractions;
+using UUIDNext;
 
 namespace Hermes.Outbox;
-public interface IUuidProvider
-{
-    Guid Provide();
-}
 
 internal sealed class DefaultUuidProvider : IUuidProvider
 {

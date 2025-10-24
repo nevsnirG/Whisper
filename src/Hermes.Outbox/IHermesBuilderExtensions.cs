@@ -1,5 +1,6 @@
 ﻿using Hermes.Abstractions;
 using Hermes.Outbox;
+using Hermes.Outbox.Abstractions;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Microsoft.Extensions.DependencyInjection;

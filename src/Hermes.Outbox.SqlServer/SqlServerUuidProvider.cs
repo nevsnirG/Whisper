@@ -1,4 +1,5 @@
-﻿using UUIDNext;
+﻿using Hermes.Outbox.Abstractions;
+using UUIDNext;
 
 namespace Hermes.Outbox.SqlServer;
 internal sealed class SqlServerUuidProvider : IUuidProvider
