@@ -1,4 +1,4 @@
-name: Push MinimalDomainEvents packages to NuGet
+name: Push Hermes to NuGet
 
 on:
   push:
