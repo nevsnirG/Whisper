@@ -7,7 +7,7 @@ Under the hood, Hermes uses `AsyncLocal<T>` to safely track domain events across
 Events raised during a logical operation (e.g., a MediatR request, an NServiceBus message handler, or an ASP.NET Core request) remain attached to that flow until they are dispatched or persisted by outer layers.
 
 Hermes integrates cleanly with **DDD** and **Clean Architecture** by keeping the **domain pure** and moving event handling to the **application** and **infrastructure** layers.  
-It also provides an optional **outbox** with **MongoDB** and **SQL Server** support, plus drop-in packages for **MediatR** and **NServiceBus**.
+It also provides an optional **outbox** with **MongoDB** and **SQL Server** support, plus drop-in packages for **MediatR** and integration wtih **NServiceBus** unit of work.
 
 > 📖 Deep dive article: [Minimal-impact domain events](https://medium.com/@kenvgrinsven/minimal-impact-domain-events-313deb1af20e)
 

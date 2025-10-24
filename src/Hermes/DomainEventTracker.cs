@@ -13,13 +13,13 @@ public static class DomainEventTracker
         var newScope = new DomainEventScope(newScopeId);
 
         if (parentScope is not null)
-            ((DomainEventScope)parentScope).Child = newScope;
+            parentScope.Child = newScope;
 
         stack.Push(newScope);
         return Task.FromResult((IDomainEventScope)newScope);
     }
 
-    internal static void ExitScope(IDomainEventScope scope)
+    internal static void ExitScope(DomainEventScope scope)
     {
         var stack = GetOrCreateStack();
         var deepestScope = stack.Peek();

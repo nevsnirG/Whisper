@@ -35,6 +35,13 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Outbox.SqlServer.NSe
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Outbox.UnitTests", "test\Hermes.Outbox.UnitTests\Hermes.Outbox.UnitTests.csproj", "{A373E066-9B31-470D-BCBD-62E9FF5DE8AA}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{8EC462FD-D22E-90A8-E5CE-7E832BA40C5D}"
+	ProjectSection(SolutionItems) = preProject
+		README.md = README.md
+	EndProjectSection
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.AspNetCore", "src\Hermes.AspNetCore\Hermes.AspNetCore.csproj", "{D10486EB-F687-41FC-828C-11C368B243DD}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -89,6 +96,10 @@ Global
 		{A373E066-9B31-470D-BCBD-62E9FF5DE8AA}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A373E066-9B31-470D-BCBD-62E9FF5DE8AA}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A373E066-9B31-470D-BCBD-62E9FF5DE8AA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D10486EB-F687-41FC-828C-11C368B243DD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D10486EB-F687-41FC-828C-11C368B243DD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D10486EB-F687-41FC-828C-11C368B243DD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D10486EB-F687-41FC-828C-11C368B243DD}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -107,6 +118,7 @@ Global
 		{C0E9222D-B7C3-45B8-9BE4-4C29E119E9BD} = {379E4CA3-E0DD-42C5-9207-1E05801DBD65}
 		{BC229E1F-9ECB-4C48-8B67-398226091A0F} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 		{A373E066-9B31-470D-BCBD-62E9FF5DE8AA} = {379E4CA3-E0DD-42C5-9207-1E05801DBD65}
+		{D10486EB-F687-41FC-828C-11C368B243DD} = {A4B1B04B-ECFA-4070-AFB5-81CBFE63E098}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {12CF64E3-A275-41C8-BCC9-B28D1E3C4D33}

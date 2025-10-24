@@ -20,6 +20,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<ProjectReference Include="..\..\src\Hermes.Abstractions\Hermes.Abstractions.csproj" />
 		<ProjectReference Include="..\..\src\Hermes.MediatR\Hermes.MediatR.csproj" />
 	</ItemGroup>
 
