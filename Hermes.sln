@@ -19,8 +19,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Dispatchers", "Dispatchers"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.MediatR", "src\Hermes.MediatR\Hermes.MediatR.csproj", "{884093D3-ACE8-4A25-A5CD-CF9B77FB92B9}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TestHost", "TestHost\TestHost.csproj", "{3C62B735-42DE-4449-9284-0E1EB775069C}"
-EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "test", "test", "{379E4CA3-E0DD-42C5-9207-1E05801DBD65}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.UnitTests", "test\Hermes.UnitTests\Hermes.UnitTests.csproj", "{17435C31-E2BA-3A51-AD69-3784AFD81712}"
@@ -37,7 +35,9 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.Outbox.UnitTests", "
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{8EC462FD-D22E-90A8-E5CE-7E832BA40C5D}"
 	ProjectSection(SolutionItems) = preProject
+		.github\workflows\publish.yml = .github\workflows\publish.yml
 		README.md = README.md
+		.github\workflows\test.yml = .github\workflows\test.yml
 	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hermes.AspNetCore", "src\Hermes.AspNetCore\Hermes.AspNetCore.csproj", "{D10486EB-F687-41FC-828C-11C368B243DD}"
@@ -72,10 +72,6 @@ Global
 		{884093D3-ACE8-4A25-A5CD-CF9B77FB92B9}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{884093D3-ACE8-4A25-A5CD-CF9B77FB92B9}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{884093D3-ACE8-4A25-A5CD-CF9B77FB92B9}.Release|Any CPU.Build.0 = Release|Any CPU
-		{3C62B735-42DE-4449-9284-0E1EB775069C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{3C62B735-42DE-4449-9284-0E1EB775069C}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{3C62B735-42DE-4449-9284-0E1EB775069C}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{3C62B735-42DE-4449-9284-0E1EB775069C}.Release|Any CPU.Build.0 = Release|Any CPU
 		{17435C31-E2BA-3A51-AD69-3784AFD81712}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{17435C31-E2BA-3A51-AD69-3784AFD81712}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{17435C31-E2BA-3A51-AD69-3784AFD81712}.Release|Any CPU.ActiveCfg = Release|Any CPU
