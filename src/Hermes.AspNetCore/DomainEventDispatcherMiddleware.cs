@@ -5,7 +5,7 @@ namespace Hermes.AspNetCore;
 
 internal sealed class DomainEventDispatcherMiddleware
 {
-    public async Task InvokeAsync(HttpContext context, RequestDelegate next, IEnumerable<IDispatchDomainEvents> dispatchers, CancellationToken cancellationToken)
+    public async Task InvokeAsync(HttpContext context, RequestDelegate next, IEnumerable<IDispatchDomainEvents> dispatchers)
     {
         using var scope = await DomainEventTracker.CreateScope();
         await next(context);
