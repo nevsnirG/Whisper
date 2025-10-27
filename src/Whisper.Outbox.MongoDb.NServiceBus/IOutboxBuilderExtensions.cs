@@ -1,4 +1,5 @@
-﻿using Whisper.Outbox.MongoDb;
+﻿using Whisper.Outbox;
+using Whisper.Outbox.MongoDb;
 using Whisper.Outbox.MongoDb.NServiceBus;
 
 namespace Microsoft.Extensions.DependencyInjection;

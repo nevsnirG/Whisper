@@ -1,4 +1,5 @@
-﻿using Whisper.Outbox.SqlServer;
+﻿using Whisper.Outbox;
+using Whisper.Outbox.SqlServer;
 using Whisper.Outbox.SqlServer.NServiceBus;
 
 namespace Microsoft.Extensions.DependencyInjection;

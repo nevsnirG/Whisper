@@ -1,6 +1,7 @@
 ﻿using Whisper.Outbox.Abstractions;
 using Whisper.Outbox.SqlServer;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Whisper.Outbox;
 
 namespace Microsoft.Extensions.DependencyInjection;
 public static class IOutboxBuilderExtensions
