@@ -1,19 +1,19 @@
-# Hermes
+# Whisper
 
-Hermes is a minimal-impact **domain event tracking** library for .NET.  
+Whisper is a minimal-impact **domain event tracking** library for .NET.  
 It lets rich domain models raise domain events with **no pollution** — no `Events` property on aggregates, no plumbing in entities, and no domain-level awareness of dispatching or persistence.
 
-Under the hood, Hermes uses `AsyncLocal<T>` to safely track domain events across both synchronous and asynchronous execution flows.  
+Under the hood, Whisper uses `AsyncLocal<T>` to safely track domain events across both synchronous and asynchronous execution flows.  
 Events raised during a logical operation (e.g., a MediatR request, an NServiceBus message handler, or an ASP.NET Core request) remain attached to that flow until they are dispatched or persisted by outer layers.
 
-Hermes integrates cleanly with **DDD** and **Clean Architecture** by keeping the **domain pure** and moving event handling to the **application** and **infrastructure** layers.  
+Whisper integrates cleanly with **DDD** and **Clean Architecture** by keeping the **domain pure** and moving event handling to the **application** and **infrastructure** layers.  
 It also provides an optional **outbox** with **MongoDB** and **SQL Server** support, plus drop-in packages for **MediatR** and integration wtih **NServiceBus** unit of work.
 
 > 📖 Deep dive article: [Minimal-impact domain events](https://medium.com/@kenvgrinsven/minimal-impact-domain-events-313deb1af20e)
 
 ---
 
-## Why Hermes?
+## Why Whisper?
 
 Traditional domain event patterns often force you to:
 
@@ -21,7 +21,7 @@ Traditional domain event patterns often force you to:
 - Hand-roll async/thread context handling, or rely on brittle statics.
 - Mix domain logic with dispatching, messaging, or persistence concerns.
 
-**Hermes avoids all of that.**
+**Whisper avoids all of that.**
 
 - **Clean domain** — no `Events` list and no infrastructure references in your entities.
 - **Async-safe tracking** — uses `AsyncLocal` so events flow across `await`s.
@@ -34,14 +34,15 @@ Traditional domain event patterns often force you to:
 
 | Package | Purpose |
 | --- | --- |
-| **Hermes** | Core tracking logic (`DomainEventTracker`, `IDomainEvent`, scopes) |
-| **Hermes.Abstractions** | Shared contracts (`IHermesBuilder`, `IDispatchDomainEvents`) |
-| **Hermes.MediatR** | MediatR integration — **automatically** dispatches raised events after each request |
-| **Hermes.Outbox** | Outbox infrastructure + background worker and installer |
-| **Hermes.Outbox.MongoDb** | MongoDB outbox store + transaction participation via `IMongoSessionProvider` |
-| **Hermes.Outbox.SqlServer** | SQL Server outbox store + transaction participation via `IConnectionLeaseProvider` |
-| **Hermes.Outbox.MongoDb.NServiceBus** | Adapter to reuse the NServiceBus **Mongo** storage session |
-| **Hermes.Outbox.SqlServer.NServiceBus** | Adapter to reuse the NServiceBus **SQL** storage session |
+| **Whisper** | Core tracking logic (`DomainEventTracker`, `IDomainEvent`, scopes) |
+| **Whisper.Abstractions** | Shared contracts (`IWhisperBuilder`, `IDispatchDomainEvents`) |
+| **Whisper.MediatR** | MediatR integration — **automatically** dispatches raised events after each request |
+| **Whisper.AspNetCore** | AspNetCore integration — **automatically** dispatches raised events after each request |
+| **Whisper.Outbox** | Outbox infrastructure + background worker and installer |
+| **Whisper.Outbox.MongoDb** | MongoDB outbox store + transaction participation via `IMongoSessionProvider` |
+| **Whisper.Outbox.SqlServer** | SQL Server outbox store + transaction participation via `IConnectionLeaseProvider` |
+| **Whisper.Outbox.MongoDb.NServiceBus** | Adapter to reuse the NServiceBus **Mongo** storage session |
+| **Whisper.Outbox.SqlServer.NServiceBus** | Adapter to reuse the NServiceBus **SQL** storage session |
 
 > Licensed under **GPL-3.0**.
 
@@ -49,14 +50,14 @@ Traditional domain event patterns often force you to:
 
 ## How it works (high level)
 
-Hermes keeps a **per-execution “domain event scope”** in an `AsyncLocal<T>`:
+Whisper keeps a **per-execution “domain event scope”** in an `AsyncLocal<T>`:
 
 1. In your **domain**, you raise events:
    ```csharp
    DomainEventTracker.RaiseDomainEvent(new OrderApproved(orderId));
    ```
-2. Hermes attaches those events to the current async flow.
-3. In your **application / infrastructure** layer, Hermes (or your configured integration) retrieves and dispatches/persists the collected events at the right time — e.g., after a MediatR pipeline completes or via the outbox worker.
+2. Whisper attaches those events to the current async flow.
+3. In your **application / infrastructure** layer, Whisper (or your configured integration) retrieves and dispatches/persists the collected events at the right time — e.g., after a MediatR pipeline completes or via the outbox worker.
 
 Your domain never exposes an events collection and never learns about dispatching, messaging, or persistence.
 
@@ -67,7 +68,7 @@ Your domain never exposes an events collection and never learns about dispatchin
 ### 1) Define a domain event
 
 ```csharp
-using Hermes;
+using Whisper;
 
 public sealed record OrderApproved(Guid OrderId) : IDomainEvent;
 ```
@@ -75,7 +76,7 @@ public sealed record OrderApproved(Guid OrderId) : IDomainEvent;
 ### 2) Raise it from anywhere in the domain
 
 ```csharp
-using Hermes;
+using Whisper;
 
 public class Order
 {
@@ -94,7 +95,7 @@ public class Order
 If you want isolation per request/unit of work, create a scope. Events raised inside are collected and can be read/cleared as needed:
 
 ```csharp
-using Hermes;
+using Whisper;
 
 using var scope = await DomainEventTracker.CreateScope();
 // ... domain operations that raise events
@@ -105,19 +106,19 @@ var raised = DomainEventTracker.GetAndClearEvents(); // events for this scope (a
 
 ---
 
-## MediatR integration (automatic)
+## MediatR integration
 
-When you call `b.AddMediatR()` inside the Hermes builder, Hermes registers:
+When you call `b.AddMediatR()` inside the Whisper builder, Whisper registers:
 - An `IDispatchDomainEvents` implementation that publishes via `IMediator`.
 - A **MediatR pipeline behavior** that **automatically retrieves and dispatches** all raised domain events after each request.
 
 ```csharp
-using Hermes.Abstractions;
+using Whisper.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 
 var services = new ServiceCollection()
     .AddMediatR(c => c.RegisterServicesFromAssemblyContaining<Program>())
-    .AddHermes(b =>
+    .AddWhisper(b =>
     {
         b.AddMediatR(); // wires up dispatcher + automatic behavior
     });
@@ -125,9 +126,22 @@ var services = new ServiceCollection()
 
 ---
 
+## AspNetCore integration
+
+When you call `app.UseDomainEventDispatcherMiddleware()` on the IApplicationBuilder of your AspNetCore host, Whisper registers:
+- A conventional `DomainEventDispatcherMiddleware` implementation that publishes via the registered `IDispatchDomainEvents` implementations.
+
+```csharp
+using Microsoft.AspNetCore.Builder;
+
+app.UseDomainEventDispatcherMiddleware();
+```
+
+---
+
 ## Outbox & transactions
 
-Hermes provides an **outbox** for reliable, asynchronous dispatch:
+Whisper provides an **outbox** for reliable, asynchronous dispatch:
 
 - Persists raised events to a durable store.
 - A background worker reads pending records and dispatches them via your configured `IDispatchDomainEvents`.
@@ -140,12 +154,12 @@ Hermes provides an **outbox** for reliable, asynchronous dispatch:
 ### MongoDB outbox
 
 ```csharp
-using Hermes.Abstractions;
+using Whisper.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 
 var services = new ServiceCollection()
     .AddMediatR(c => c.RegisterServicesFromAssemblyContaining<Program>())
-    .AddHermes(b =>
+    .AddWhisper(b =>
     {
         b.AddMediatR();
 
@@ -164,7 +178,7 @@ var services = new ServiceCollection()
     });
 ```
 
-**`IMongoSessionProvider`** allows Hermes to participate in your MongoDB session/transaction:
+**`IMongoSessionProvider`** allows Whisper to participate in your MongoDB session/transaction:
 
 ```csharp
 using MongoDB.Driver;
@@ -176,17 +190,17 @@ public interface IMongoSessionProvider
 ```
 
 > There are **no** `Commit` / `Abort` methods on this interface.  
-> Transaction commit/rollback is coordinated internally by Hermes.
+> Transaction commit/rollback is coordinated internally by Whisper.
 
 ### SQL Server outbox
 
 ```csharp
-using Hermes.Abstractions;
+using Whisper.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 
 var services = new ServiceCollection()
     .AddMediatR(c => c.RegisterServicesFromAssemblyContaining<Program>())
-    .AddHermes(b =>
+    .AddWhisper(b =>
     {
         b.AddMediatR();
 
@@ -205,10 +219,10 @@ var services = new ServiceCollection()
     });
 ```
 
-**`IConnectionLeaseProvider`** lets Hermes use your SQL connection + transaction:
+**`IConnectionLeaseProvider`** lets Whisper use your SQL connection + transaction:
 
 ```csharp
-using Hermes.Outbox.SqlServer;
+using Whisper.Outbox.SqlServer;
 using Microsoft.Data.SqlClient;
 
 public interface IConnectionLeaseProvider
@@ -223,7 +237,7 @@ public interface IConnectionLease : IAsyncDisposable
 }
 ```
 
-> The **lease lifecycle is owned by Hermes**.  
+> The **lease lifecycle is owned by Whisper**.  
 > Do **not** manually dispose/commit/rollback the lease — the outbox worker handles it.
 
 ### NServiceBus adapters
@@ -253,11 +267,11 @@ b.AddOutbox(ob =>
 ## Clean Architecture fit
 
 - **Domain**  
-  References only `Hermes`. Raises events via `DomainEventTracker.RaiseDomainEvent(...)`.  
+  References only `Whisper`. Raises events via `DomainEventTracker.RaiseDomainEvent(...)`.  
   No `Events` collection, no knowledge of dispatching or outbox.
 
 - **Application**  
-  Orchestrates operations; MediatR behavior (from Hermes.MediatR) automatically flushes events.
+  Orchestrates operations; MediatR behavior (from Whisper.MediatR) automatically flushes events.
 
 - **Infrastructure**  
   Configures outbox storage (Mongo/SQL), transaction providers, and messaging integrations (e.g., NServiceBus).
@@ -267,12 +281,12 @@ b.AddOutbox(ob =>
 
 ---
 
-## AddHermes API (DI)
+## AddWhisper API (DI)
 
-Hermes uses a tiny builder to register components.
+Whisper uses a tiny builder to register components.
 
 ```csharp
-services.AddHermes(b =>
+services.AddWhisper(b =>
 {
     b.AddMediatR();
     b.AddOutbox(ob =>
@@ -288,18 +302,18 @@ services.AddHermes(b =>
 
 **Signature**
 ```csharp
-public static IServiceCollection AddHermes(
+public static IServiceCollection AddWhisper(
     this IServiceCollection services,
-    Action<Hermes.Abstractions.IHermesBuilder> configure);
+    Action<Whisper.Abstractions.IWhisperBuilder> configure);
 ```
 
-`IHermesBuilder` exposes the underlying `IServiceCollection` so you can extend/customize the setup.
+`IWhisperBuilder` exposes the underlying `IServiceCollection` so you can extend/customize the setup.
 
 ---
 
 ## Core API reference
 
-### `DomainEventTracker` (Hermes)
+### `DomainEventTracker` (Whisper)
 
 | Method | Description |
 | --- | --- |
@@ -308,7 +322,7 @@ public static IServiceCollection AddHermes(
 | `IReadOnlyCollection<IDomainEvent> Peek()` | Inspect currently raised events without clearing them. |
 | `IReadOnlyCollection<IDomainEvent> GetAndClearEvents()` | Retrieve and clear the collected events for the current (deepest) scope. |
 
-### `IDispatchDomainEvents` (Hermes.Abstractions)
+### `IDispatchDomainEvents` (Whisper.Abstractions)
 
 ```csharp
 public interface IDispatchDomainEvents
@@ -318,26 +332,26 @@ public interface IDispatchDomainEvents
 }
 ```
 
-> Hermes.MediatR provides an implementation that publishes via `IMediator`, and includes an automatic behavior that flushes raised events after each pipeline execution.
+> Whisper.MediatR provides an implementation that publishes via `IMediator`, and includes an automatic behavior that flushes raised events after each pipeline execution.
 
 ---
 
 ## FAQ (quick)
 
 **Do I need to add an `Events` list to my aggregates?**  
-No. Raise events with `DomainEventTracker.RaiseDomainEvent(...)` and let Hermes collect them.
+No. Raise events with `DomainEventTracker.RaiseDomainEvent(...)` and let Whisper collect them.
 
 **Is it safe across `async/await`?**  
-Yes. Hermes uses `AsyncLocal<T>` to keep events bound to the current async execution flow.
+Yes. Whisper uses `AsyncLocal<T>` to keep events bound to the current async execution flow.
 
 **How do duplicates get handled?**  
-Hermes does not attempt to deduplicate; if you need deduplication, implement it at your dispatcher/consumer side.
+Whisper does not attempt to deduplicate; if you need deduplication, implement it at your dispatcher/consumer side.
 
 **Who commits/rolls back the DB transaction for the outbox?**  
-Hermes coordinates commit/rollback internally in the outbox worker. Don’t dispose/commit/rollback your lease/session manually.
+Whisper coordinates commit/rollback internally in the outbox worker. Don’t dispose/commit/rollback your lease/session manually.
 
 **Does MediatR require a custom behavior from me?**  
-No. When you use `b.AddMediatR()`, Hermes adds its own behavior that dispatches raised events automatically.
+No. When you use `b.AddMediatR()`, Whisper adds its own behavior that dispatches raised events automatically.
 
 ---
 
@@ -350,4 +364,4 @@ No. When you use `b.AddMediatR()`, Hermes adds its own behavior that dispatches 
 - **NServiceBus adapters**: reuse existing storage sessions.  
 - **Clean Architecture aligned**: domain stays pure; infrastructure handles dispatch/persistence.
 
-> Hermes — domain events without domain pollution.
+> Whisper — domain events without domain pollution.

@@ -1,0 +1,42 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net8.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+
+		<PackageId>Whisper.Outbox.SqlServer.NServiceBus</PackageId>
+		<Version>0.1.0-alpha</Version>
+		<Authors>Ken van Grinsven</Authors>
+		<Company>Grinsven Software Solutions</Company>
+
+		<GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+		<IncludeSymbols>true</IncludeSymbols>
+		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
+		<PackageTags>Domain events</PackageTags>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
+		<IsPackable>true</IsPackable>
+		<Title>Whisper.Outbox.SqlServer.NServiceBus</Title>
+		<Description>Integrate into the Unit-Of-Work of NServiceBus with SqlServer persistence.</Description>
+		<PackageProjectUrl>https://github.com/nevsnirG/Whisper</PackageProjectUrl>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<RepositoryUrl>https://github.com/nevsnirG/Whisper</RepositoryUrl>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="NServiceBus.Persistence.Sql" Version="[4.0.0,)" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\Whisper.Outbox.SqlServer\Whisper.Outbox.SqlServer.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Include="..\..\README.md">
+			<Pack>True</Pack>
+			<PackagePath>\</PackagePath>
+		</None>
+	</ItemGroup>
+
+</Project>
