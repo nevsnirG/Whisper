@@ -6,6 +6,7 @@ on:
     paths:
       - 'test/**'
       - 'src/**'
+      - '.github/workflows/test.yml' 
 
 jobs:
   build:

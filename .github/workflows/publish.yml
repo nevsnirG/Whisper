@@ -1,10 +1,11 @@
-name: Push Hermes to NuGet
+name: Push Whisper to NuGet
 
 on:
   push:
     branches: [ "master" ]
     paths:
       - 'src/**'
+      - '.github/workflows/publish.yml' 
 
 jobs:
   build:
@@ -21,5 +22,5 @@ jobs:
       run: dotnet test -c Release --no-build
     - name: Package
       run: dotnet pack -c Release --no-build --output .
-    # - name: push to nuget
-      # run: dotnet nuget push "*.nupkg" --api-key ${{secrets.nuget_api_key}} --source https://api.nuget.org/v3/index.json --skip-duplicate
+    - name: push to nuget
+      run: dotnet nuget push "*.nupkg" --api-key ${{secrets.nuget_api_key}} --source https://api.nuget.org/v3/index.json --skip-duplicate
