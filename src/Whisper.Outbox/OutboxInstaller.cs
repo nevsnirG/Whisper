@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Hosting;
+using Whisper.Outbox.Abstractions;
 
 namespace Whisper.Outbox;
 internal sealed class OutboxInstaller(IInstallOutbox outboxInstaller, OutboxInstallerAwaiter outboxInstallerAwaiter) : IHostedService

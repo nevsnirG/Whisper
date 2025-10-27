@@ -1,4 +1,6 @@
-﻿namespace Whisper.Outbox.UnitTests;
+﻿using Whisper.Outbox.Abstractions;
+
+namespace Whisper.Outbox.UnitTests;
 public class OutboxInstallerTests
 {
     [Fact]

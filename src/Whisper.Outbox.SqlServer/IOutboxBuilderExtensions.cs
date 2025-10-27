@@ -1,5 +1,4 @@
-﻿using Whisper.Outbox;
-using Whisper.Outbox.Abstractions;
+﻿using Whisper.Outbox.Abstractions;
 using Whisper.Outbox.SqlServer;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 

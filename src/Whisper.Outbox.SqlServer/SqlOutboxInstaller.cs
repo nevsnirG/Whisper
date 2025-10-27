@@ -1,5 +1,6 @@
 ﻿using Microsoft.Data.SqlClient;
 using System.Data;
+using Whisper.Outbox.Abstractions;
 
 namespace Whisper.Outbox.SqlServer;
 internal sealed class SqlOutboxInstaller(SqlOutboxConfiguration sqlOutboxConfiguration) : IInstallOutbox

@@ -1,4 +1,5 @@
 ﻿using MongoDB.Driver;
+using Whisper.Outbox.Abstractions;
 
 namespace Whisper.Outbox.MongoDb;
 internal sealed class MongoDbOutboxInstaller(MongoDbOutboxConfiguration mongoDbOutboxConfiguration, MongoClient mongoClient) : IInstallOutbox
