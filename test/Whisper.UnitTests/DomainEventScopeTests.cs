@@ -1,4 +1,4 @@
-﻿namespace Hermes.Core.UnitTests;
+﻿namespace Whisper.Core.UnitTests;
 public class DomainEventScopeTests
 {
     [Fact(DisplayName = "Domain events raised inside of a scope are accessible inside of that scope")]

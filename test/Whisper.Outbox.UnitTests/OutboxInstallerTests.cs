@@ -1,4 +1,4 @@
-﻿namespace Hermes.Outbox.UnitTests;
+﻿namespace Whisper.Outbox.UnitTests;
 public class OutboxInstallerTests
 {
     [Fact]

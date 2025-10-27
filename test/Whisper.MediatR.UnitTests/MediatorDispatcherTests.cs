@@ -1,6 +1,6 @@
 ﻿using MediatR;
 
-namespace Hermes.MediatR.UnitTests;
+namespace Whisper.MediatR.UnitTests;
 public class MediatorDispatcherTests
 {
     private readonly MediatorDispatcher _sut;

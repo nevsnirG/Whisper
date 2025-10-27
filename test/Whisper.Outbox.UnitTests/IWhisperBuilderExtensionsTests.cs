@@ -1,16 +1,16 @@
-﻿using Hermes.Abstractions;
-using Hermes.Outbox.Abstractions;
+﻿using Whisper.Abstractions;
+using Whisper.Outbox.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Hermes.Outbox.UnitTests;
+namespace Whisper.Outbox.UnitTests;
 
-public class IHermesBuilderExtensionsTests
+public class IWhisperBuilderExtensionsTests
 {
     [Fact]
     public void AddOutbox_WhenAwaitIsNotReady_RegistersBlockingDispatcher()
     {
         var serviceCollection = new ServiceCollection() as IServiceCollection;
-        serviceCollection.AddHermes(b => b.AddOutbox(b => { }));
+        serviceCollection.AddWhisper(b => b.AddOutbox(b => { }));
         serviceCollection.AddSingleton(Substitute.For<IOutboxStore>());
 
         serviceCollection.Should()
@@ -26,7 +26,7 @@ public class IHermesBuilderExtensionsTests
     public void AddOutbox_WhenAwaiterReady_RegistersNonBlockingDispatcher()
     {
         var serviceCollection = new ServiceCollection() as IServiceCollection;
-        serviceCollection.AddHermes(b => b.AddOutbox(b => { }));
+        serviceCollection.AddWhisper(b => b.AddOutbox(b => { }));
         serviceCollection.AddSingleton(Substitute.For<IOutboxStore>());
 
         serviceCollection.Should()

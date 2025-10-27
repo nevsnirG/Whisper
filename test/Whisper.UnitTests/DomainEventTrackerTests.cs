@@ -1,6 +1,6 @@
 using System.Runtime.CompilerServices;
 
-namespace Hermes.Core.UnitTests;
+namespace Whisper.Core.UnitTests;
 
 public class DomainEventTrackerTests
 {

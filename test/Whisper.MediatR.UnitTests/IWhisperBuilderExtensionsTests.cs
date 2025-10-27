@@ -1,15 +1,15 @@
-﻿using Hermes.Abstractions;
+﻿using Whisper.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Hermes.MediatR.UnitTests;
+namespace Whisper.MediatR.UnitTests;
 
-public class IHermesBuilderExtensionsTests
+public class IWhisperBuilderExtensionsTests
 {
     [Fact]
     public void AddMediatR_RegistersDispatcher()
     {
         var serviceCollection = new ServiceCollection() as IServiceCollection;
-        serviceCollection.AddHermes(b => b.AddMediatR());
+        serviceCollection.AddWhisper(b => b.AddMediatR());
 
         var registration = serviceCollection.Should().ContainSingle().Which;
         registration.ServiceType.Should().Be<IDispatchDomainEvents>();

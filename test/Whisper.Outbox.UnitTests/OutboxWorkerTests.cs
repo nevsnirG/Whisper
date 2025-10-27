@@ -1,9 +1,9 @@
-﻿using Hermes.Abstractions;
-using Hermes.Outbox.Abstractions;
+﻿using Whisper.Abstractions;
+using Whisper.Outbox.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 
-namespace Hermes.Outbox.UnitTests;
+namespace Whisper.Outbox.UnitTests;
 public class OutboxWorkerTests
 {
     [Fact]
