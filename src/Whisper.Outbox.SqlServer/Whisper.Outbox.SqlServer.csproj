@@ -22,6 +22,7 @@
 		<PackageProjectUrl>https://github.com/nevsnirG/Whisper</PackageProjectUrl>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
 		<RepositoryUrl>https://github.com/nevsnirG/Whisper</RepositoryUrl>
+		<PackageIcon>whisper.png</PackageIcon>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -36,6 +37,10 @@
 		<None Include="..\..\README.md">
 			<Pack>True</Pack>
 			<PackagePath>\</PackagePath>
+		</None>
+		<None Include="..\..\whisper.png">
+		  <Pack>True</Pack>
+		  <PackagePath>\</PackagePath>
 		</None>
 	</ItemGroup>
 
