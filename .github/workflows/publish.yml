@@ -9,6 +9,8 @@ on:
 
 jobs:
   build:
+    permissions:
+      id-token: write 
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -23,4 +25,4 @@ jobs:
     - name: Package
       run: dotnet pack -c Release --no-build --output .
     - name: push to nuget
-      run: dotnet nuget push "*.nupkg" --api-key ${{secrets.nuget_api_key}} --source https://api.nuget.org/v3/index.json --skip-duplicate
+      run: dotnet nuget push "*.nupkg" --api-key ${{steps.login.outputs.NUGET_API_KEY}} --source https://api.nuget.org/v3/index.json --skip-duplicate
