@@ -35,6 +35,6 @@ internal sealed record class DomainEventScope : IDomainEventScope
 
     public void Dispose()
     {
-        DomainEventTracker.ExitScope(this);
+        Whisper.ExitScope(this);
     }
 }

@@ -1,6 +1,6 @@
 ﻿namespace Whisper;
 
-public static class DomainEventTracker
+public static class Whisper
 {
     private static readonly AsyncLocal<DomainEventScopeStack> _scopeStack = new();
 
@@ -31,7 +31,7 @@ public static class DomainEventTracker
             poppedScope = stack.Pop();
     }
 
-    public static void RaiseDomainEvent(IDomainEvent domainEvent)
+    public static void About(IDomainEvent domainEvent)
     {
         var deepestScopeRef = GetOrCreateStack().Peek();
         deepestScopeRef?.RaiseDomainEvent(domainEvent);
