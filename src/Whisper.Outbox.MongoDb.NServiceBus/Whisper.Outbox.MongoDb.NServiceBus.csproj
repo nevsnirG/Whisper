@@ -6,7 +6,7 @@
 		<Nullable>enable</Nullable>
 
 		<PackageId>Whisper.Outbox.MongoDb.NServiceBus</PackageId>
-		<Version>0.1.0-alpha</Version>
+		<Version>0.1.1-alpha</Version>
 		<Authors>Ken van Grinsven</Authors>
 		<Company>Grinsven Software Solutions</Company>
 
