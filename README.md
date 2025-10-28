@@ -34,7 +34,7 @@ Traditional domain event patterns often force you to:
 
 | Package | Purpose |
 | --- | --- |
-| **Whisper** | Core tracking logic (`DomainEventTracker`, `IDomainEvent`, scopes) |
+| **Whisper** | Core tracking logic (`Whisper`, `IDomainEvent`, scopes) |
 | **Whisper.Abstractions** | Shared contracts (`IWhisperBuilder`, `IDispatchDomainEvents`) |
 | **Whisper.MediatR** | MediatR integration — **automatically** dispatches raised events after each request |
 | **Whisper.AspNetCore** | AspNetCore integration — **automatically** dispatches raised events after each request |
@@ -54,7 +54,7 @@ Whisper keeps a **per-execution “domain event scope”** in an `AsyncLocal<T>`
 
 1. In your **domain**, you raise events:
    ```csharp
-   DomainEventTracker.RaiseDomainEvent(new OrderApproved(orderId));
+   Whisper.About(new OrderApproved(orderId));
    ```
 2. Whisper attaches those events to the current async flow.
 3. In your **application / infrastructure** layer, Whisper (or your configured integration) retrieves and dispatches/persists the collected events at the right time — e.g., after a MediatR pipeline completes or via the outbox worker.
@@ -85,7 +85,7 @@ public class Order
     public void Approve()
     {
         // Domain logic...
-        DomainEventTracker.RaiseDomainEvent(new OrderApproved(Id));
+        Whisper.About(new OrderApproved(Id));
     }
 }
 ```
@@ -97,9 +97,9 @@ If you want isolation per request/unit of work, create a scope. Events raised in
 ```csharp
 using Whisper;
 
-using var scope = await DomainEventTracker.CreateScope();
+using var scope = await Whisper.CreateScope();
 // ... domain operations that raise events
-var raised = DomainEventTracker.GetAndClearEvents(); // events for this scope (and children)
+var raised = Whisper.GetAndClearEvents(); // events for this scope (and children)
 ```
 
 > Most users don’t need to manage scopes explicitly — integrations (like MediatR) take care of flushing at the right time.
@@ -267,7 +267,7 @@ b.AddOutbox(ob =>
 ## Clean Architecture fit
 
 - **Domain**  
-  References only `Whisper`. Raises events via `DomainEventTracker.RaiseDomainEvent(...)`.  
+  References only `Whisper`. Raises events via `Whisper.About(...)`.  
   No `Events` collection, no knowledge of dispatching or outbox.
 
 - **Application**  
@@ -313,12 +313,12 @@ public static IServiceCollection AddWhisper(
 
 ## Core API reference
 
-### `DomainEventTracker` (Whisper)
+### `Whisper` (Whisper)
 
 | Method | Description |
 | --- | --- |
 | `Task<IDomainEventScope> CreateScope()` | Creates an ambient scope (nestable). |
-| `void RaiseDomainEvent(IDomainEvent domainEvent)` | Raises a domain event from anywhere in the domain. |
+| `void About(IDomainEvent domainEvent)` | Raises a domain event from anywhere in the domain. |
 | `IReadOnlyCollection<IDomainEvent> Peek()` | Inspect currently raised events without clearing them. |
 | `IReadOnlyCollection<IDomainEvent> GetAndClearEvents()` | Retrieve and clear the collected events for the current (deepest) scope. |
 
@@ -339,7 +339,7 @@ public interface IDispatchDomainEvents
 ## FAQ (quick)
 
 **Do I need to add an `Events` list to my aggregates?**  
-No. Raise events with `DomainEventTracker.RaiseDomainEvent(...)` and let Whisper collect them.
+No. Raise events with `Whisper.About(...)` and let Whisper collect them.
 
 **Is it safe across `async/await`?**  
 Yes. Whisper uses `AsyncLocal<T>` to keep events bound to the current async execution flow.
