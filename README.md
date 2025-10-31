@@ -268,7 +268,7 @@ b.AddOutbox(ob =>
 
 - **Domain**  
   References only `Whisper`. Raises events via `Whisper.About(...)`.  
-  No `Events` collection, no knowledge of dispatching or outbox.
+  No `Events` collection, no leakage of domain events, no knowledge of dispatching or outbox.
 
 - **Application**  
   Orchestrates operations; MediatR behavior (from Whisper.MediatR) automatically flushes events.
@@ -277,7 +277,7 @@ b.AddOutbox(ob =>
   Configures outbox storage (Mongo/SQL), transaction providers, and messaging integrations (e.g., NServiceBus).
 
 - **Presentation/API**  
-  Optionally manages request scopes if you need explicit isolation (often not required).
+  AspNetCore middleware to scope domain events per request.
 
 ---
 
@@ -317,7 +317,7 @@ public static IServiceCollection AddWhisper(
 
 | Method | Description |
 | --- | --- |
-| `Task<IDomainEventScope> CreateScope()` | Creates an ambient scope (nestable). |
+| `Task<IDisposable> CreateScope()` | Creates an ambient scope (nestable). |
 | `void About(IDomainEvent domainEvent)` | Raises a domain event from anywhere in the domain. |
 | `IReadOnlyCollection<IDomainEvent> Peek()` | Inspect currently raised events without clearing them. |
 | `IReadOnlyCollection<IDomainEvent> GetAndClearEvents()` | Retrieve and clear the collected events for the current (deepest) scope. |
