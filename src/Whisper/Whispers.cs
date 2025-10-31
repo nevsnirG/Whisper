@@ -1,6 +1,6 @@
 ﻿namespace Whisper;
 
-public static class Whisper
+public static class Whispers
 {
     private static readonly AsyncLocal<Murmur> _domainEvents = new();
 
