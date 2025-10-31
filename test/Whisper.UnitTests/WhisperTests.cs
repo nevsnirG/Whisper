@@ -1,22 +1,47 @@
 using System.Runtime.CompilerServices;
 
-namespace Whisper.Core.UnitTests;
+namespace Whisper.UnitTests;
 
 public class WhisperTests
 {
-    [Fact(DisplayName = "Domain events raised inside of a scope are accessible inside of that scope")]
-    public async Task DomainEventsAreTrackedInsideOfScopes()
+    [Fact(DisplayName = "Peeking does not reset the current active implicit scope.")]
+    public void PeekDoesNotClearDomainEvents()
     {
-        using var scope = await Whisper.CreateScope();
+        Whisper.About(new TestEvent());
+        Whisper.Peek();
+        Whisper.Peek().Should().HaveCount(1);
+    }
+
+    [Fact(DisplayName = "GetAndClearEvents resets the current active implicit scope")]
+    public void GetAndClearEventsClearsDomainEvents()
+    {
+        Whisper.About(new TestEvent());
+        Whisper.GetAndClearEvents().Should().HaveCount(1);
+        Whisper.GetAndClearEvents().Should().BeEmpty();
+    }
+
+    [Fact(DisplayName = "Domain events can be tracked even after clearing the scope")]
+    public void GetAndClearEventsResetsScopeButScopeStaysAvailable()
+    {
+        Whisper.About(new TestEvent());
+        Whisper.GetAndClearEvents();
+        Whisper.About(new TestEvent());
+        Whisper.GetAndClearEvents().Should().HaveCount(1);
+    }
+
+    [Fact(DisplayName = "Domain events raised inside of a scope are accessible inside of that scope")]
+    public void DomainEventsAreTrackedInsideOfScopes()
+    {
+        using var scope = Whisper.CreateScope();
         Whisper.About(new TestEvent());
         var createdEvents = Whisper.GetAndClearEvents();
         createdEvents.Should().NotBeEmpty();
     }
 
     [Fact(DisplayName = "Domain events raised inside of a scope are not accessible outside of that scope")]
-    public async Task DomainEventsAreNotTrackedOutsideOfScopes()
+    public void DomainEventsAreNotTrackedOutsideOfScopes()
     {
-        using (var scope = await Whisper.CreateScope())
+        using (var scope = Whisper.CreateScope())
         {
             Whisper.About(new TestEvent());
         }
@@ -26,15 +51,15 @@ public class WhisperTests
     }
 
     [Fact(DisplayName = "Domain events raised inside of a nested scope are not accessible in the parent scope.")]
-    public async Task DomainEventsRaisedInNestedScopesAreAccessibleInTheParentScope()
+    public void DomainEventsRaisedInNestedScopesAreAccessibleInTheParentScope()
     {
-        using (var scope = await Whisper.CreateScope())
+        using (var scope = Whisper.CreateScope())
         {
             Whisper.About(new TestEvent("I was raised in the top scope."));
-            using (var nestedScope = await Whisper.CreateScope())
+            using (var nestedScope = Whisper.CreateScope())
             {
                 Whisper.About(new TestEvent("I was raised in the nested scope."));
-                using (var evenMoreNestedScope = await Whisper.CreateScope())
+                using (var evenMoreNestedScope = Whisper.CreateScope())
                 {
                     Whisper.About(new TestEvent("I was raised in the deepest scope."));
                     Whisper.Peek().Should().HaveCount(1)
@@ -60,19 +85,19 @@ public class WhisperTests
     }
 
     [Fact(DisplayName = "A higher scope disposed in a deeper scope will cascade disposing of all deeper scopes.")]
-    public async Task DisposingAHigherScopeInADeeperScopeDisposesAllDeeperScope()
+    public void DisposingAHigherScopeInADeeperScopeDisposesAllDeeperScope()
     {
-        using var topScope = await Whisper.CreateScope();
-        topScope.RaiseDomainEvent(new TestEvent("I was raised in the top scope."));
+        using var topScope = Whisper.CreateScope();
+        Whisper.About(new TestEvent("I was raised in the top scope."));
 
-        using var deeperScope = await Whisper.CreateScope();
-        deeperScope.RaiseDomainEvent(new TestEvent("I was raised in the deeper scope."));
+        using var deeperScope = Whisper.CreateScope();
+        Whisper.About(new TestEvent("I was raised in the deeper scope."));
 
-        using var evenDeeperScope = await Whisper.CreateScope();
-        evenDeeperScope.RaiseDomainEvent(new TestEvent("I was raised in the even deeper scope."));
+        using var evenDeeperScope = Whisper.CreateScope();
+        Whisper.About(new TestEvent("I was raised in the even deeper scope."));
 
-        using var deepestScope = await Whisper.CreateScope();
-        deepestScope.RaiseDomainEvent(new TestEvent("I was raised in the deepest scope."));
+        using var deepestScope = Whisper.CreateScope();
+        Whisper.About(new TestEvent("I was raised in the deepest scope."));
 
         deeperScope.Dispose();
 
@@ -81,19 +106,19 @@ public class WhisperTests
                     .Which.Value.Should().Be("I was raised in the top scope.");
     }
 
-    [Fact(DisplayName = "Domain events raised inside a scope are not available outside of the scope in which they were raised in.")]
-    public async Task DomainEventsInScopeAreNotAvailableOutsideOfScope()
+    [Fact(DisplayName = "Domain events raised inside a scope are not available higher in the synchronous callstack outside of the scope in which they were raised.")]
+    public void DomainEventsInScopeAreNotAvailableOutsideOfScope()
     {
-        await SubMethodThatRaisesDomainEventInOwnScope("I was raised in a deeper but synchronous method.");
+        SubMethodThatRaisesDomainEventInOwnScope("I was raised in a deeper but synchronous method.");
 
-        Whisper.Peek().Should().BeEmpty();
+        Whisper.GetAndClearEvents().Should().BeEmpty();
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static async Task SubMethodThatRaisesDomainEventInOwnScope(string contents)
+    private static void SubMethodThatRaisesDomainEventInOwnScope(string contents)
     {
-        var topScope = await Whisper.CreateScope();
-        topScope.RaiseDomainEvent(new TestEvent(contents));
+        using var _ = Whisper.CreateScope();
+        Whisper.About(new TestEvent(contents));
     }
 
     private sealed record class TestEvent(string Value = "") : IDomainEvent;

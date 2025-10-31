@@ -2,55 +2,31 @@
 
 public static class Whisper
 {
-    private static readonly AsyncLocal<DomainEventScopeStack> _scopeStack = new();
+    private static readonly AsyncLocal<Murmur> _domainEvents = new();
 
-    public static Task<IDomainEventScope> CreateScope()
+    public static IDisposable CreateScope()
     {
-        var stack = GetOrCreateStack();
-        var parentScope = stack.Peek();
-
-        var newScopeId = stack.Count + 1;
-        var newScope = new DomainEventScope(newScopeId);
-
-        if (parentScope is not null)
-            parentScope.Child = newScope;
-
-        stack.Push(newScope);
-        return Task.FromResult((IDomainEventScope)newScope);
-    }
-
-    internal static void ExitScope(DomainEventScope scope)
-    {
-        var stack = GetOrCreateStack();
-        var deepestScope = stack.Peek();
-        if (deepestScope == null || deepestScope.Id < scope.Id)
-            return;
-
-        var poppedScope = stack.Pop();
-        while (poppedScope!.Id > scope.Id)
-            poppedScope = stack.Pop();
+        return new DomainEventScope(_domainEvents);
     }
 
     public static void About(IDomainEvent domainEvent)
     {
-        var deepestScopeRef = GetOrCreateStack().Peek();
-        deepestScopeRef?.RaiseDomainEvent(domainEvent);
+        _domainEvents.Value ??= [];
+        _domainEvents.Value!.Add(domainEvent);
     }
 
-    public static IReadOnlyCollection<IDomainEvent> Peek()
+    public static IDomainEvent[] Peek()
     {
-        var deepestScopeRef = GetOrCreateStack().Peek();
-        return deepestScopeRef?.Peek() ?? [];
+        if (_domainEvents.Value is null)
+            return [];
+
+        return [.. _domainEvents.Value];
     }
 
-    public static IReadOnlyCollection<IDomainEvent> GetAndClearEvents()
+    public static IDomainEvent[] GetAndClearEvents()
     {
-        var deepestScopeRef = GetOrCreateStack().Peek();
-        return deepestScopeRef?.GetAndClearEvents() ?? [];
-    }
-
-    private static DomainEventScopeStack GetOrCreateStack()
-    {
-        return _scopeStack.Value ??= new DomainEventScopeStack();
+        var events = _domainEvents.Value?.ToArray() ?? [];
+        _domainEvents.Value = [];
+        return events;
     }
 }

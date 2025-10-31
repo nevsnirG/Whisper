@@ -8,10 +8,10 @@ internal sealed class DomainEventDispatcherMiddleware
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822:Mark members as static", Justification = "Invoked by AspNetCore")]
     public async Task InvokeAsync(HttpContext context, RequestDelegate next, IEnumerable<IDispatchDomainEvents> dispatchers)
     {
-        using var scope = await Whisper.CreateScope();
+        using var _ = Whisper.CreateScope();
         await next(context);
 
-        var domainEvents = scope!.GetAndClearEvents();
+        var domainEvents = Whisper.GetAndClearEvents();
 
         if (domainEvents.Length == 0)
             return;

@@ -1,7 +1,7 @@
 ﻿using System.Collections;
 
 namespace Whisper;
-internal sealed class DomainEventBag : IEnumerable<IDomainEvent>
+internal sealed class Murmur : IEnumerable<IDomainEvent>
 {
     private readonly List<IDomainEvent> _domainEvents = [];
 

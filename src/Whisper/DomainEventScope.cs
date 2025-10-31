@@ -1,40 +1,21 @@
-﻿namespace Whisper;
+﻿using System.Diagnostics.CodeAnalysis;
 
-internal sealed record class DomainEventScope : IDomainEventScope
+namespace Whisper;
+
+internal sealed record class DomainEventScope : IDisposable
 {
-    public int Id { get; }
-    internal IDomainEventScope? Child { get; set; }
+    private readonly AsyncLocal<Murmur> _domainEvents;
+    private readonly Murmur _oldValue;
 
-    private DomainEventBag _domainEvents = [];
-
-    internal DomainEventScope(int id)
+    internal DomainEventScope([NotNull] AsyncLocal<Murmur> domainEvents)
     {
-        Id = id;
-    }
-
-    public void RaiseDomainEvent(IDomainEvent domainEvent)
-    {
-        _domainEvents.Add(domainEvent);
-    }
-
-    public IDomainEvent[] Peek()
-    {
-        return [.. _domainEvents];
-    }
-
-    public IDomainEvent[] GetAndClearEvents()
-    {
-        var events = new List<IDomainEvent>(_domainEvents);
-
-        if (Child is not null)
-            events.AddRange(Child.GetAndClearEvents());
-
-        _domainEvents = [];
-        return [.. events];
+        _domainEvents = domainEvents;
+        _oldValue = domainEvents.Value!;
+        domainEvents!.Value = [];
     }
 
     public void Dispose()
     {
-        Whisper.ExitScope(this);
+        _domainEvents.Value = _oldValue;
     }
 }
