@@ -3,10 +3,10 @@ using Microsoft.AspNetCore.Http;
 
 namespace Whisper.AspNetCore;
 
-internal sealed class DomainEventDispatcherMiddleware
+internal sealed class DomainEventDispatcherMiddleware(RequestDelegate next)
 {
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822:Mark members as static", Justification = "Invoked by AspNetCore")]
-    public async Task InvokeAsync(HttpContext context, RequestDelegate next, IEnumerable<IDispatchDomainEvents> dispatchers)
+    public async Task InvokeAsync(HttpContext context, IEnumerable<IDispatchDomainEvents> dispatchers)
     {
         using var _ = Whispers.CreateScope();
         await next(context);
