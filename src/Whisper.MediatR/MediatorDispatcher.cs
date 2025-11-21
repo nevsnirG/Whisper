@@ -9,11 +9,9 @@ internal sealed class MediatorDispatcher(IMediator mediator) : IDispatchDomainEv
         return mediator.Publish(domainEvent, cancellationToken);
     }
 
-    public async Task Dispatch(IDomainEvent[] domainEvents, CancellationToken cancellationToken)
+    public Task Dispatch(IDomainEvent[] domainEvents, CancellationToken cancellationToken)
     {
-        foreach (var domainEvent in domainEvents)
-        {
-            await mediator.Publish(domainEvent, cancellationToken);
-        }
+        return Task.WhenAll(
+            domainEvents.Select(d => mediator.Publish(d, cancellationToken)));
     }
 }
