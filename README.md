@@ -7,7 +7,7 @@ Under the hood, Whisper uses `AsyncLocal<T>` to safely track domain events acros
 Events raised during a logical operation (e.g., a MediatR request, an NServiceBus message handler, or an ASP.NET Core request) remain attached to that flow until they are dispatched or persisted by outer layers.
 
 Whisper integrates cleanly with **DDD** and **Clean Architecture** by keeping the **domain pure** and moving event handling to the **application** and **infrastructure** layers.  
-It also provides an optional **outbox** with **MongoDB** and **SQL Server** support, plus drop-in packages for **MediatR** and integration wtih **NServiceBus** unit of work.
+It also provides an optional **outbox** with **MongoDB** and **SQL Server** support, plus drop-in packages for **MediatR** and integration with **NServiceBus** unit of work.
 
 > 📖 Deep dive article: [Minimal-impact domain events](https://vgss.io/posts/domain-events.html)
 
