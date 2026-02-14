@@ -9,7 +9,7 @@ Events raised during a logical operation (e.g., a MediatR request, an NServiceBu
 Whisper integrates cleanly with **DDD** and **Clean Architecture** by keeping the **domain pure** and moving event handling to the **application** and **infrastructure** layers.  
 It also provides an optional **outbox** with **MongoDB** and **SQL Server** support, plus drop-in packages for **MediatR** and integration wtih **NServiceBus** unit of work.
 
-> 📖 Deep dive article: [Minimal-impact domain events](https://medium.com/@kenvgrinsven/minimal-impact-domain-events-313deb1af20e)
+> 📖 Deep dive article: [Minimal-impact domain events](https://vgss.io/posts/domain-events.html)
 
 ---
 
