@@ -44,7 +44,7 @@ Traditional domain event patterns often force you to:
 | **Whisper.Outbox.MongoDb.NServiceBus** | Adapter to reuse the NServiceBus **Mongo** storage session |
 | **Whisper.Outbox.SqlServer.NServiceBus** | Adapter to reuse the NServiceBus **SQL** storage session |
 
-> Licensed under **GPL-3.0**.
+> Licensed under **MIT**.
 
 ---
 
