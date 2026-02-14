@@ -34,15 +34,15 @@ Traditional domain event patterns often force you to:
 
 | Package | Purpose |
 | --- | --- |
-| **Whisper** | Core tracking logic (`Whisper`, `IDomainEvent`, scopes) |
-| **Whisper.Abstractions** | Shared contracts (`IWhisperBuilder`, `IDispatchDomainEvents`) |
-| **Whisper.MediatR** | MediatR integration — **automatically** dispatches raised events after each request |
-| **Whisper.AspNetCore** | AspNetCore integration — **automatically** dispatches raised events after each request |
-| **Whisper.Outbox** | Outbox infrastructure + background worker and installer |
-| **Whisper.Outbox.MongoDb** | MongoDB outbox store + transaction participation via `IMongoSessionProvider` |
-| **Whisper.Outbox.SqlServer** | SQL Server outbox store + transaction participation via `IConnectionLeaseProvider` |
-| **Whisper.Outbox.MongoDb.NServiceBus** | Adapter to reuse the NServiceBus **Mongo** storage session |
-| **Whisper.Outbox.SqlServer.NServiceBus** | Adapter to reuse the NServiceBus **SQL** storage session |
+| [**Whisper**](https://www.nuget.org/packages/Whisper) | Core tracking logic (`Whisper`, `IDomainEvent`, scopes) |
+| [**Whisper.Abstractions**](https://www.nuget.org/packages/Whisper.Abstractions) | Shared contracts (`IWhisperBuilder`, `IDispatchDomainEvents`) |
+| [**Whisper.MediatR**](https://www.nuget.org/packages/Whisper.MediatR) | MediatR integration — **automatically** dispatches raised events after each request |
+| [**Whisper.AspNetCore**](https://www.nuget.org/packages/Whisper.AspNetCore) | AspNetCore integration — **automatically** dispatches raised events after each request |
+| [**Whisper.Outbox**](https://www.nuget.org/packages/Whisper.Outbox) | Outbox infrastructure + background worker and installer |
+| [**Whisper.Outbox.MongoDb**](https://www.nuget.org/packages/Whisper.Outbox.MongoDb) | MongoDB outbox store + transaction participation via `IMongoSessionProvider` |
+| [**Whisper.Outbox.SqlServer**](https://www.nuget.org/packages/Whisper.Outbox.SqlServer) | SQL Server outbox store + transaction participation via `IConnectionLeaseProvider` |
+| [**Whisper.Outbox.MongoDb.NServiceBus**](https://www.nuget.org/packages/Whisper.Outbox.MongoDb.NServiceBus) | Adapter to reuse the NServiceBus **Mongo** storage session |
+| [**Whisper.Outbox.SqlServer.NServiceBus**](https://www.nuget.org/packages/Whisper.Outbox.SqlServer.NServiceBus) | Adapter to reuse the NServiceBus **SQL** storage session |
 
 > Licensed under **MIT**.
 
