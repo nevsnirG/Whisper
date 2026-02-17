@@ -2,6 +2,7 @@
 using Whisper.Outbox.Abstractions;
 
 namespace Whisper.Outbox;
+
 internal sealed class OutboxDispatcher(IOutboxStore outboxStore,
                                        IDomainEventSerializer domainEventSerializer,
                                        TimeProvider timeProvider,
@@ -18,6 +19,10 @@ internal sealed class OutboxDispatcher(IOutboxStore outboxStore,
         var outboxRecords = domainEvents
             .Select(CreateOutboxRecord)
             .ToArray();
+
+        if (outboxRecords.Length == 0)
+            return Task.CompletedTask;
+
         return outboxStore.Add(outboxRecords, cancellationToken);
     }
 

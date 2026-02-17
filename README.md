@@ -54,7 +54,7 @@ Whisper keeps a **per-execution “domain event scope”** in an `AsyncLocal<T>`
 
 1. In your **domain**, you raise events:
    ```csharp
-   Whisper.About(new OrderApproved(orderId));
+   Whispers.About(new OrderApproved(orderId));
    ```
 2. Whisper attaches those events to the current async flow.
 3. In your **application / infrastructure** layer, Whisper (or your configured integration) retrieves and dispatches/persists the collected events at the right time — e.g., after a MediatR pipeline completes or via the outbox worker.
@@ -85,7 +85,7 @@ public class Order
     public void Approve()
     {
         // Domain logic...
-        Whisper.About(new OrderApproved(Id));
+        Whispers.About(new OrderApproved(Id));
     }
 }
 ```
@@ -97,9 +97,9 @@ If you want isolation per request/unit of work, create a scope. Events raised in
 ```csharp
 using Whisper;
 
-using var scope = await Whisper.CreateScope();
+using var scope = await Whispers.CreateScope();
 // ... domain operations that raise events
-var raised = Whisper.GetAndClearEvents(); // events for this scope (and children)
+var raised = Whispers.GetAndClearEvents(); // events for this scope (and children)
 ```
 
 > Most users don’t need to manage scopes explicitly — integrations (like MediatR) take care of flushing at the right time.
