@@ -1,17 +1,21 @@
-﻿using Whisper.Outbox;
-using Whisper.Outbox.Abstractions;
-using Whisper.Outbox.MongoDb;
-using MongoDB.Bson;
+﻿using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
+using Whisper.Outbox;
+using Whisper.Outbox.Abstractions;
+using Whisper.Outbox.MongoDb;
 
 namespace Microsoft.Extensions.DependencyInjection;
+
 public static class IOutboxBuilderExtensions
 {
     public static IOutboxBuilder AddMongoDb(this IOutboxBuilder outboxBuilder, MongoDbOutboxConfiguration mongoDbOutboxConfiguration)
     {
         RegisterOutboxRecordClassMap();
+#pragma warning disable CS0618 // Type or member is obsolete
+        BsonDefaults.GuidRepresentationMode = GuidRepresentationMode.V3;
+#pragma warning restore CS0618 // Type or member is obsolete
 
         outboxBuilder.Services
             .AddScoped<IOutboxStore, MongoDbOutboxStore>(static sp =>
