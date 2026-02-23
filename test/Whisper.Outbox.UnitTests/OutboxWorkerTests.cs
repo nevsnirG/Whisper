@@ -1,9 +1,10 @@
-﻿using Whisper.Abstractions;
-using Whisper.Outbox.Abstractions;
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
+using Whisper.Abstractions;
+using Whisper.Outbox.Abstractions;
 
 namespace Whisper.Outbox.UnitTests;
+
 public class OutboxWorkerTests
 {
     [Fact]
@@ -65,8 +66,7 @@ public class OutboxWorkerTests
         await outboxStore.ReceivedWithAnyArgs(1).ReadNextBatch(default);
         serializer.Received(1).Deserialize("SomePayload", "SomeType");
         serviceScopeFactory.Received(1).CreateScope();
-        await outboxStore.Received(1).SetDispatchedAt(Arg.Is<OutboxRecord[]>(ors =>
-            ors.Single().DispatchedAtUtc == timeProvider.GetUtcNow()), Arg.Any<CancellationToken>());
+        await outboxStore.Received(1).SetDispatchedAt(Arg.Any<OutboxRecord>(), timeProvider.GetUtcNow(), Arg.Any<CancellationToken>());
     }
 
     private record TestEvent() : IDomainEvent;

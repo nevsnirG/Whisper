@@ -1,11 +1,11 @@
-﻿using Whisper.Outbox.Abstractions;
-using Microsoft.Data.SqlClient;
+﻿using Microsoft.Data.SqlClient;
 using System.Data;
 using System.Text;
+using Whisper.Outbox.Abstractions;
 
 namespace Whisper.Outbox.SqlServer;
 
-internal sealed class SqlOutboxStore(SqlOutboxConfiguration sqlOutboxConfiguration, TimeProvider timeProvider, IConnectionLeaseProvider connectionLeaseProvider) : IOutboxStore
+internal sealed class SqlOutboxStore(SqlOutboxConfiguration sqlOutboxConfiguration, IConnectionLeaseProvider connectionLeaseProvider) : IOutboxStore
 {
     private const int BatchSize = 10;
 
@@ -87,37 +87,20 @@ ORDER BY Id ASC;";
         return [.. list];
     }
 
-    public async Task SetDispatchedAt(OutboxRecord[] outboxRecordBatch, CancellationToken cancellationToken)
+    public async Task SetDispatchedAt(OutboxRecord outboxRecord, DateTimeOffset dispatchedAtUtc, CancellationToken cancellationToken)
     {
         var table = QualifyTableName(sqlOutboxConfiguration.SchemaName, sqlOutboxConfiguration.TableName);
-        var now = timeProvider.GetUtcNow();
 
         var sb = new StringBuilder();
         sb.Append($@"
-;WITH Ids(Id) AS (
-    SELECT CAST(NULL AS UNIQUEIDENTIFIER) WHERE 1=0");
-
-        for (var i = 0; i < outboxRecordBatch.Length; i++)
-        {
-            sb.Append($@"
-    UNION ALL SELECT @p{i}");
-        }
-
-        sb.Append($@"
-)
-UPDATE T
+UPDATE {table} 
 SET DispatchedAtUtc = @now
-FROM {table} AS T
-JOIN Ids ON T.Id = Ids.Id;");
+WHERE Id = @id;");
 
         await using var connectionLease = await connectionLeaseProvider.Provide(cancellationToken);
         using var cmd = new SqlCommand(sb.ToString(), connectionLease.Connection, connectionLease.Transaction);
-        cmd.Parameters.Add(new SqlParameter("@now", SqlDbType.DateTimeOffset) { Value = now });
-
-        for (var i = 0; i < outboxRecordBatch.Length; i++)
-        {
-            cmd.Parameters.Add(new SqlParameter($"@p{i}", SqlDbType.UniqueIdentifier) { Value = outboxRecordBatch[i].Id });
-        }
+        cmd.Parameters.Add(new SqlParameter("@now", SqlDbType.DateTimeOffset) { Value = dispatchedAtUtc });
+        cmd.Parameters.Add(new SqlParameter("@id", SqlDbType.UniqueIdentifier) { Value = outboxRecord.Id });
 
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }

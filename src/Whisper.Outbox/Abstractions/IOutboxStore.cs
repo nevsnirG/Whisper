@@ -8,5 +8,5 @@ public interface IOutboxStore
 
     Task<OutboxRecord[]> ReadNextBatch(CancellationToken cancellationToken);
 
-    Task SetDispatchedAt(OutboxRecord[] outboxRecord, CancellationToken cancellationToken);
+    Task SetDispatchedAt(OutboxRecord outboxRecord, DateTimeOffset dispatchedAtUtc, CancellationToken cancellationToken);
 }

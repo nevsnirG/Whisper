@@ -1,9 +1,10 @@
-﻿using Whisper.Abstractions;
-using Whisper.Outbox.Abstractions;
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Whisper.Abstractions;
+using Whisper.Outbox.Abstractions;
 
 namespace Whisper.Outbox;
+
 internal sealed class OutboxWorker(IOutboxStore outboxStore,
                                    IDomainEventSerializer domainEventSerializer,
                                    TimeProvider timeProvider,
@@ -39,23 +40,11 @@ internal sealed class OutboxWorker(IOutboxStore outboxStore,
         {
             await ProcessOutboxRecord(outboxRecord, cancellationToken);
         }
-
-        await MarkAsDispatched(outboxRecordBatch, cancellationToken);
     }
 
     private async Task ProcessOutboxRecord(OutboxRecord outboxRecord, CancellationToken cancellationToken)
     {
-        var domainEvent = DeserializeDomainEvent(outboxRecord);
-        await DispatchDomainEvent(domainEvent, cancellationToken);
-    }
-
-    private IDomainEvent DeserializeDomainEvent(OutboxRecord outboxRecord)
-    {
-        return domainEventSerializer.Deserialize(outboxRecord.Payload, outboxRecord.AssemblyQualifiedType);
-    }
-
-    private async Task<IServiceScope> DispatchDomainEvent(IDomainEvent domainEvent, CancellationToken cancellationToken)
-    {
+        var domainEvent = domainEventSerializer.Deserialize(outboxRecord.Payload, outboxRecord.AssemblyQualifiedType);
         using var scope = serviceScopeFactory.CreateScope();
         var dispatchers = scope.ServiceProvider.GetKeyedServices<IDispatchDomainEvents>(IWhisperBuilderExtensions.ServiceKey)
             .Where(s => s is not OutboxDispatcher);
@@ -64,17 +53,6 @@ internal sealed class OutboxWorker(IOutboxStore outboxStore,
         {
             await dispatcher.Dispatch(domainEvent, cancellationToken);
         }
-
-        return scope;
-    }
-
-    private async Task MarkAsDispatched(OutboxRecord[] outboxRecordBatch, CancellationToken cancellationToken)
-    {
-        foreach (var outboxRecord in outboxRecordBatch)
-        {
-            outboxRecord.DispatchedAtUtc = timeProvider.GetUtcNow();
-        }
-
-        await outboxStore.SetDispatchedAt(outboxRecordBatch, cancellationToken);
+        await outboxStore.SetDispatchedAt(outboxRecord, timeProvider.GetUtcNow(), cancellationToken);
     }
 }

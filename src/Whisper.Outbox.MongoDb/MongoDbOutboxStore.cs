@@ -1,12 +1,13 @@
-﻿using Whisper.Outbox.Abstractions;
-using MongoDB.Driver;
+﻿using MongoDB.Driver;
+using Whisper.Outbox.Abstractions;
 
 namespace Whisper.Outbox.MongoDb;
+
 internal sealed class MongoDbOutboxStore(IMongoCollection<OutboxRecord> outboxCollection, IMongoSessionProvider mongoSessionProvider) : IOutboxStore
 {
     public Task Add(OutboxRecord outboxRecord, CancellationToken cancellationToken)
     {
-        if (mongoSessionProvider.Session is not null)
+        if (mongoSessionProvider.IsInTransaction)
             return outboxCollection.InsertOneAsync(mongoSessionProvider.Session, outboxRecord, new InsertOneOptions(), cancellationToken);
         else
             return outboxCollection.InsertOneAsync(outboxRecord, new InsertOneOptions(), cancellationToken);
@@ -18,7 +19,7 @@ internal sealed class MongoDbOutboxStore(IMongoCollection<OutboxRecord> outboxCo
         {
             IsOrdered = false
         };
-        if (mongoSessionProvider.Session is not null)
+        if (mongoSessionProvider.IsInTransaction)
             return outboxCollection.InsertManyAsync(mongoSessionProvider.Session, outboxRecords, options, cancellationToken);
         else
             return outboxCollection.InsertManyAsync(outboxRecords, options, cancellationToken);
@@ -34,25 +35,14 @@ internal sealed class MongoDbOutboxStore(IMongoCollection<OutboxRecord> outboxCo
         return [.. cursor];
     }
 
-    public Task SetDispatchedAt(OutboxRecord[] outboxRecordBatch, CancellationToken cancellationToken)
+    public Task SetDispatchedAt(OutboxRecord outboxRecord, DateTimeOffset dispatchedAtUtc, CancellationToken cancellationToken)
     {
-        var updateOneModels = new List<UpdateOneModel<OutboxRecord>>(outboxRecordBatch.Length);
+        var filter = Builders<OutboxRecord>.Filter.Eq(or => or.Id, outboxRecord.Id);
+        var update = Builders<OutboxRecord>.Update.Set(or => or.DispatchedAtUtc, dispatchedAtUtc);
 
-        foreach (var outboxRecord in outboxRecordBatch)
-        {
-            var filter = Builders<OutboxRecord>.Filter.Eq(or => or.Id, outboxRecord.Id);
-            var update = Builders<OutboxRecord>.Update.Set(or => or.DispatchedAtUtc, outboxRecord.DispatchedAtUtc);
-            updateOneModels.Add(new UpdateOneModel<OutboxRecord>(filter, update));
-        }
-
-        var bulkWriteOptions = new BulkWriteOptions
-        {
-            IsOrdered = false
-        };
-
-        if (mongoSessionProvider.Session is not null)
-            return outboxCollection.BulkWriteAsync(mongoSessionProvider.Session, updateOneModels, bulkWriteOptions, cancellationToken);
+        if (mongoSessionProvider.IsInTransaction)
+            return outboxCollection.UpdateOneAsync(mongoSessionProvider.Session, filter, update, null, cancellationToken);
         else
-            return outboxCollection.BulkWriteAsync(updateOneModels, bulkWriteOptions, cancellationToken);
+            return outboxCollection.UpdateOneAsync(filter, update, null, cancellationToken);
     }
 }
