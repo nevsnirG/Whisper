@@ -12,6 +12,11 @@ public static class IOutboxBuilderExtensions
 {
     public static IOutboxBuilder AddMongoDb(this IOutboxBuilder outboxBuilder, MongoDbOutboxConfiguration mongoDbOutboxConfiguration)
     {
+        return AddMongoDb(outboxBuilder, _ => mongoDbOutboxConfiguration);
+    }
+
+    public static IOutboxBuilder AddMongoDb(this IOutboxBuilder outboxBuilder, Func<IServiceProvider, MongoDbOutboxConfiguration> mongoDbOutboxConfiguration)
+    {
         RegisterOutboxRecordClassMap();
 #pragma warning disable CS0618 // Type or member is obsolete
         BsonDefaults.GuidRepresentationMode = GuidRepresentationMode.V3;
@@ -24,7 +29,7 @@ public static class IOutboxBuilderExtensions
                 return ActivatorUtilities.CreateInstance<MongoDbOutboxStore>(sp, outboxCollection);
             })
             .AddSingleton(mongoDbOutboxConfiguration)
-            .AddSingleton(new MongoClient(mongoDbOutboxConfiguration.ConnectionString))
+            .AddSingleton(sp => new MongoClient(sp.GetRequiredService<MongoDbOutboxConfiguration>().ConnectionString))
             .AddTransient<IInstallOutbox, MongoDbOutboxInstaller>()
             .AddScoped<IMongoSessionProvider, EmptyMongoSessionProvider>()
             ;
