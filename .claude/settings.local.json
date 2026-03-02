@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la /c/git/Whisper/test/Whisper.Analyzer.UnitTests/*.cs)",
+      "Bash(xargs grep -l \"class.*Entity\\\\|IDomainEvent\\\\|Whispers.About\")",
+      "Bash(dotnet sln Whisper.sln add test/Whisper.Outbox.IntegrationTests/Whisper.Outbox.IntegrationTests.csproj --solution-folder test)",
+      "Bash(dotnet build test/Whisper.Outbox.IntegrationTests/Whisper.Outbox.IntegrationTests.csproj)",
+      "Bash(dotnet test test/Whisper.Outbox.IntegrationTests/Whisper.Outbox.IntegrationTests.csproj --verbosity normal)"
+    ]
+  }
+}
