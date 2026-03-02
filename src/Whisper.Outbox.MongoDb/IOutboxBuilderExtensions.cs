@@ -18,9 +18,6 @@ public static class IOutboxBuilderExtensions
     public static IOutboxBuilder AddMongoDb(this IOutboxBuilder outboxBuilder, Func<IServiceProvider, MongoDbOutboxConfiguration> mongoDbOutboxConfiguration)
     {
         RegisterOutboxRecordClassMap();
-#pragma warning disable CS0618 // Type or member is obsolete
-        BsonDefaults.GuidRepresentationMode = GuidRepresentationMode.V3;
-#pragma warning restore CS0618 // Type or member is obsolete
 
         outboxBuilder.Services
             .AddScoped<IOutboxStore, MongoDbOutboxStore>(static sp =>

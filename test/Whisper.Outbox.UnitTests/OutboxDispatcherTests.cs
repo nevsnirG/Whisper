@@ -1,12 +1,8 @@
-﻿using Whisper.Outbox.Abstractions;
-using Microsoft.Extensions.Time.Testing;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using Microsoft.Extensions.Time.Testing;
+using Whisper.Outbox.Abstractions;
 
 namespace Whisper.Outbox.UnitTests;
+
 public class OutboxDispatcherTests
 {
     [Fact]
