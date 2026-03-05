@@ -7,12 +7,9 @@ internal interface IDomainEventSerializer
     IDomainEvent Deserialize(string json, string assemblyQualifiedType);
 }
 
-internal sealed class DomainEventSerializer : IDomainEventSerializer
+internal sealed class DomainEventSerializer(OutboxJsonOptions outboxJsonOptions) : IDomainEventSerializer
 {
-    private static readonly JsonSerializerOptions _jsonSerializerOptions = new()
-    {
-        WriteIndented = false,
-    };
+    private readonly JsonSerializerOptions _jsonSerializerOptions = BuildOptions(outboxJsonOptions);
 
     public string Serialize(IDomainEvent domainEvent)
     {
@@ -29,5 +26,15 @@ internal sealed class DomainEventSerializer : IDomainEventSerializer
         }
 
         return (JsonSerializer.Deserialize(json, type, _jsonSerializerOptions) as IDomainEvent)!;
+    }
+
+    private static JsonSerializerOptions BuildOptions(OutboxJsonOptions options)
+    {
+        var jsonOptions = new JsonSerializerOptions { WriteIndented = false };
+        foreach (var converter in options.Converters)
+        {
+            jsonOptions.Converters.Add(converter);
+        }
+        return jsonOptions;
     }
 }

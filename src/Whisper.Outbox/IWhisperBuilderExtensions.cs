@@ -1,9 +1,10 @@
-﻿using Whisper.Abstractions;
+﻿using Microsoft.Extensions.DependencyInjection.Extensions;
+using Whisper.Abstractions;
 using Whisper.Outbox;
 using Whisper.Outbox.Abstractions;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Microsoft.Extensions.DependencyInjection;
+
 public static class IWhisperBuilderExtensions
 {
     internal const string ServiceKey = "innerDispatcher";
@@ -20,6 +21,8 @@ public static class IWhisperBuilderExtensions
             AddKeyedFromDescriptor(hermesBuilder.Services, serviceDescriptor, ServiceKey);
         }
         hermesBuilder.Services
+            .TryAddSingleton(new OutboxJsonOptions());
+        hermesBuilder.Services
             .AddSingleton(TimeProvider.System)
             .AddSingleton<OutboxInstallerAwaiter>()
             .AddTransient<IUuidProvider, DefaultUuidProvider>()
@@ -33,11 +36,24 @@ public static class IWhisperBuilderExtensions
                     ? inner
                     : new BlockingOutboxDispatcher(awaiter, inner);
             })
-            .AddScoped<IDomainEventSerializer, DomainEventSerializer>()
+            .AddSingleton<IDomainEventSerializer, DomainEventSerializer>()
             .AddHostedService<OutboxInstaller>()
             .AddHostedService<OutboxWorker>();
         configure?.Invoke(new OutboxBuilder(hermesBuilder.Services));
         return hermesBuilder;
+    }
+
+    /// <summary>
+    /// Configures custom JSON serialization options for the outbox.
+    /// Use this to register <see cref="System.Text.Json.Serialization.JsonConverter"/>s
+    /// for value types that System.Text.Json cannot deserialize by default.
+    /// </summary>
+    public static IOutboxBuilder ConfigureSerializer(this IOutboxBuilder outboxBuilder, Action<OutboxJsonOptions> configure)
+    {
+        var options = new OutboxJsonOptions();
+        configure(options);
+        outboxBuilder.Services.AddSingleton(options);
+        return outboxBuilder;
     }
 
     private static void AddKeyedFromDescriptor(IServiceCollection services, ServiceDescriptor sd, object serviceKey)
