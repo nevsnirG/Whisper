@@ -1,4 +1,5 @@
-﻿using Whisper.Abstractions;
+using MediatR;
+using Whisper.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Whisper.MediatR.UnitTests;
@@ -6,13 +7,17 @@ namespace Whisper.MediatR.UnitTests;
 public class IWhisperBuilderExtensionsTests
 {
     [Fact]
-    public void AddMediatR_RegistersDispatcher()
+    public void AddMediatR_RegistersDispatcherAndCaptureBehavior()
     {
         var serviceCollection = new ServiceCollection() as IServiceCollection;
         serviceCollection.AddWhisper(b => b.AddMediatR());
 
-        var registration = serviceCollection.Should().ContainSingle().Which;
-        registration.ServiceType.Should().Be<IDispatchDomainEvents>();
-        registration.ImplementationType.Should().Be<MediatorDispatcher>();
+        serviceCollection.Should().Contain(s =>
+            s.ServiceType == typeof(IDispatchDomainEvents)
+            && s.ImplementationType == typeof(MediatorDispatcher));
+
+        serviceCollection.Should().Contain(s =>
+            s.ServiceType == typeof(IPipelineBehavior<,>)
+            && s.ImplementationType == typeof(DomainEventCaptureBehavior<,>));
     }
 }
