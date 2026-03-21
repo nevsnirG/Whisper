@@ -1,15 +1,17 @@
-﻿using System.Text.Json;
+﻿using Microsoft.Extensions.Options;
+using System.Text.Json;
 
 namespace Whisper.Outbox;
+
 internal interface IDomainEventSerializer
 {
     string Serialize(IDomainEvent domainEvent);
     IDomainEvent Deserialize(string json, string assemblyQualifiedType);
 }
 
-internal sealed class DomainEventSerializer(OutboxJsonOptions outboxJsonOptions) : IDomainEventSerializer
+internal sealed class DomainEventSerializer(IOptions<OutboxJsonOptions> outboxJsonOptions) : IDomainEventSerializer
 {
-    private readonly JsonSerializerOptions _jsonSerializerOptions = BuildOptions(outboxJsonOptions);
+    private readonly JsonSerializerOptions _jsonSerializerOptions = BuildOptions(outboxJsonOptions.Value);
 
     public string Serialize(IDomainEvent domainEvent)
     {

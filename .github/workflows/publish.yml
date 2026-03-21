@@ -1,23 +1,23 @@
-﻿name: Push Whisper to NuGet
+name: Push Whisper to NuGet
 
 on:
   push:
     branches: [ "master" ]
     paths:
       - 'src/**'
-      - '.github/workflows/publish.yml' 
+      - '.github/workflows/publish.yml'
 
 jobs:
   build:
     permissions:
-      id-token: write 
+      id-token: write
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
     - name: Checkout
-      uses: actions/checkout@v2
+      uses: actions/checkout@v4
     - name: Setup .NET SDK
-      uses: actions/setup-dotnet@v1
+      uses: actions/setup-dotnet@v4
     - name: Build
       run: dotnet build -c Release
     - name: Test

@@ -1,38 +1,31 @@
-﻿using Microsoft.Data.SqlClient;
+using Microsoft.Data.SqlClient;
 using System.Data;
-using System.Text;
 using Whisper.Outbox.Abstractions;
 
 namespace Whisper.Outbox.SqlServer;
 
 internal sealed class SqlOutboxStore(SqlOutboxConfiguration sqlOutboxConfiguration, IConnectionLeaseProvider connectionLeaseProvider) : IOutboxStore
 {
-    private const int BatchSize = 10;
-
     public async Task Add(OutboxRecord outboxRecord, CancellationToken cancellationToken)
     {
-        var table = QualifyTableName(sqlOutboxConfiguration.SchemaName, sqlOutboxConfiguration.TableName);
         var sql = $@"
-INSERT INTO {table}
+INSERT INTO {QualifiedTableName()}
 (Id, EnqueuedAtUtc, AssemblyQualifiedType, Payload)
 VALUES (@Id, @EnqueuedAtUtc, @AssemblyQualifiedType, @Payload);";
 
-        await using var connectionLease = await connectionLeaseProvider.Provide(cancellationToken);
-        using var cmd = new SqlCommand(sql, connectionLease.Connection, connectionLease.Transaction);
-
-        cmd.Parameters.Add(new SqlParameter("@Id", SqlDbType.UniqueIdentifier) { Value = outboxRecord.Id });
-        cmd.Parameters.Add(new SqlParameter("@EnqueuedAtUtc", SqlDbType.DateTimeOffset) { Value = outboxRecord.EnqueuedAtUtc });
-        cmd.Parameters.Add(new SqlParameter("@AssemblyQualifiedType", SqlDbType.NVarChar, 2048) { Value = outboxRecord.AssemblyQualifiedType });
-        cmd.Parameters.Add(new SqlParameter("@Payload", SqlDbType.NVarChar, -1) { Value = outboxRecord.Payload });
-
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
+        await ExecuteAsync(sql, cmd =>
+        {
+            cmd.Parameters.Add(new SqlParameter("@Id", SqlDbType.UniqueIdentifier) { Value = outboxRecord.Id });
+            cmd.Parameters.Add(new SqlParameter("@EnqueuedAtUtc", SqlDbType.DateTimeOffset) { Value = outboxRecord.EnqueuedAtUtc });
+            cmd.Parameters.Add(new SqlParameter("@AssemblyQualifiedType", SqlDbType.NVarChar, 2048) { Value = outboxRecord.AssemblyQualifiedType });
+            cmd.Parameters.Add(new SqlParameter("@Payload", SqlDbType.NVarChar, -1) { Value = outboxRecord.Payload });
+        }, cancellationToken);
     }
 
     public async Task Add(OutboxRecord[] outboxRecords, CancellationToken cancellationToken)
     {
-        var table = QualifyTableName(sqlOutboxConfiguration.SchemaName, sqlOutboxConfiguration.TableName);
         var sql = $@"
-INSERT INTO {table}
+INSERT INTO {QualifiedTableName()}
 (Id, EnqueuedAtUtc, AssemblyQualifiedType, Payload)
 VALUES (@Id, @EnqueuedAtUtc, @AssemblyQualifiedType, @Payload);";
 
@@ -57,21 +50,20 @@ VALUES (@Id, @EnqueuedAtUtc, @AssemblyQualifiedType, @Payload);";
         }
     }
 
-    public async Task<OutboxRecord[]> ReadNextBatch(CancellationToken cancellationToken)
+    public async Task<OutboxRecord[]> ReadNextBatch(int batchSize, CancellationToken cancellationToken)
     {
-        var table = QualifyTableName(sqlOutboxConfiguration.SchemaName, sqlOutboxConfiguration.TableName);
         var sql = $@"
 SELECT TOP (@take)
-    Id, EnqueuedAtUtc, AssemblyQualifiedType, Payload
-FROM {table} WITH (READCOMMITTEDLOCK)
-WHERE DispatchedAtUtc IS NULL
+    Id, EnqueuedAtUtc, Retries, AssemblyQualifiedType, Payload
+FROM {QualifiedTableName()} WITH (READCOMMITTEDLOCK)
+WHERE DispatchedAtUtc IS NULL AND FailedAtUtc IS NULL
 ORDER BY Id ASC;";
 
         await using var connectionLease = await connectionLeaseProvider.Provide(cancellationToken);
         using var cmd = new SqlCommand(sql, connectionLease.Connection, connectionLease.Transaction);
-        cmd.Parameters.Add(new SqlParameter("@take", SqlDbType.Int) { Value = BatchSize });
+        cmd.Parameters.Add(new SqlParameter("@take", SqlDbType.Int) { Value = batchSize });
 
-        var list = new List<OutboxRecord>(BatchSize);
+        var list = new List<OutboxRecord>(batchSize);
         await using var reader = await cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
@@ -79,36 +71,58 @@ ORDER BY Id ASC;";
             {
                 Id = reader.GetGuid(0),
                 EnqueuedAtUtc = reader.GetFieldValue<DateTimeOffset>(1),
-                AssemblyQualifiedType = reader.GetString(2),
-                Payload = reader.GetString(3),
+                Retries = reader.GetInt32(2),
+                AssemblyQualifiedType = reader.GetString(3),
+                Payload = reader.GetString(4),
             });
         }
 
         return [.. list];
     }
 
-    public async Task SetDispatchedAt(OutboxRecord outboxRecord, DateTimeOffset dispatchedAtUtc, CancellationToken cancellationToken)
+    public Task SetDispatchedAt(OutboxRecord outboxRecord, DateTimeOffset dispatchedAtUtc, CancellationToken cancellationToken)
     {
-        var table = QualifyTableName(sqlOutboxConfiguration.SchemaName, sqlOutboxConfiguration.TableName);
+        return ExecuteUpdateByIdAsync("SET DispatchedAtUtc = @value", outboxRecord.Id, cmd =>
+            cmd.Parameters.Add(new SqlParameter("@value", SqlDbType.DateTimeOffset) { Value = dispatchedAtUtc }),
+            cancellationToken);
+    }
 
-        var sb = new StringBuilder();
-        sb.Append($@"
-UPDATE {table} 
-SET DispatchedAtUtc = @now
-WHERE Id = @id;");
+    public Task IncrementRetries(OutboxRecord outboxRecord, CancellationToken cancellationToken)
+    {
+        return ExecuteUpdateByIdAsync("SET Retries = Retries + 1", outboxRecord.Id, _ => { }, cancellationToken);
+    }
 
+    public Task SetFailedAt(OutboxRecord outboxRecord, DateTimeOffset failedAtUtc, CancellationToken cancellationToken)
+    {
+        return ExecuteUpdateByIdAsync("SET FailedAtUtc = @value", outboxRecord.Id, cmd =>
+            cmd.Parameters.Add(new SqlParameter("@value", SqlDbType.DateTimeOffset) { Value = failedAtUtc }),
+            cancellationToken);
+    }
+
+    private Task ExecuteUpdateByIdAsync(string setClause, Guid id, Action<SqlCommand> addParameters, CancellationToken cancellationToken)
+    {
+        var sql = $@"
+UPDATE {QualifiedTableName()}
+{setClause}
+WHERE Id = @id;";
+
+        return ExecuteAsync(sql, cmd =>
+        {
+            cmd.Parameters.Add(new SqlParameter("@id", SqlDbType.UniqueIdentifier) { Value = id });
+            addParameters(cmd);
+        }, cancellationToken);
+    }
+
+    private async Task ExecuteAsync(string sql, Action<SqlCommand> addParameters, CancellationToken cancellationToken)
+    {
         await using var connectionLease = await connectionLeaseProvider.Provide(cancellationToken);
-        using var cmd = new SqlCommand(sb.ToString(), connectionLease.Connection, connectionLease.Transaction);
-        cmd.Parameters.Add(new SqlParameter("@now", SqlDbType.DateTimeOffset) { Value = dispatchedAtUtc });
-        cmd.Parameters.Add(new SqlParameter("@id", SqlDbType.UniqueIdentifier) { Value = outboxRecord.Id });
-
+        using var cmd = new SqlCommand(sql, connectionLease.Connection, connectionLease.Transaction);
+        addParameters(cmd);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private static string QualifyTableName(string schemaName, string tableName)
-    {
-        return $"{Bracket(schemaName)}.{Bracket(tableName)}";
-    }
+    private string QualifiedTableName()
+        => $"{Bracket(sqlOutboxConfiguration.SchemaName)}.{Bracket(sqlOutboxConfiguration.TableName)}";
 
     private static string Bracket(string identifier)
         => $"[{identifier.Replace("[", string.Empty).Replace("]", string.Empty)}]";

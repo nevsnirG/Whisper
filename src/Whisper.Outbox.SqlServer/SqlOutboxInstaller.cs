@@ -23,6 +23,8 @@ internal sealed class SqlOutboxInstaller(SqlOutboxConfiguration sqlOutboxConfigu
             EnqueuedAtUtc         DATETIMEOFFSET(7) NOT NULL 
                 CONSTRAINT DF_Outbox_EnqueuedAtUtc DEFAULT (SYSUTCDATETIME()),
             DispatchedAtUtc       DATETIMEOFFSET(7) NULL,
+            FailedAtUtc           DATETIMEOFFSET(7) NULL,
+            Retries               INT NOT NULL CONSTRAINT DF_Outbox_Retries DEFAULT (0),
             AssemblyQualifiedType NVARCHAR(2048) NOT NULL,
             Payload               NVARCHAR(MAX)   NOT NULL,
             CONSTRAINT PK_OutboxRecords PRIMARY KEY CLUSTERED (Id)
@@ -55,8 +57,8 @@ internal sealed class SqlOutboxInstaller(SqlOutboxConfiguration sqlOutboxConfigu
           AND object_id = OBJECT_ID(N'{qualifiedTable}'))
     BEGIN
         CREATE NONCLUSTERED INDEX IX_Outbox_Undispatched_ById
-        ON {qualifiedTable} (DispatchedAtUtc, Id)
-        WHERE DispatchedAtUtc IS NULL;
+        ON {qualifiedTable} (DispatchedAtUtc, FailedAtUtc, Id)
+        WHERE DispatchedAtUtc IS NULL AND FailedAtUtc IS NULL;
     END;
 ";
         command.Parameters.Add(new SqlParameter("@schema", SqlDbType.NVarChar, 128) { Value = qualifiedSchema });

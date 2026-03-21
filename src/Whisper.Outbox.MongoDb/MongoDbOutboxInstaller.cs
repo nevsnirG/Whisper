@@ -10,12 +10,15 @@ internal sealed class MongoDbOutboxInstaller(MongoDbOutboxConfiguration mongoDbO
         var outboxCollection = database.GetCollection<OutboxRecord>(mongoDbOutboxConfiguration.CollectionName);
         var keys = Builders<OutboxRecord>.IndexKeys
             .Ascending(x => x.DispatchedAtUtc)
+            .Ascending(x => x.FailedAtUtc)
             .Ascending(x => x.Id);
 
         var options = new CreateIndexOptions<OutboxRecord>
         {
             Name = "ix_outbox_undispatched_by_id",
-            PartialFilterExpression = Builders<OutboxRecord>.Filter.Eq(x => x.DispatchedAtUtc, null)
+            PartialFilterExpression = Builders<OutboxRecord>.Filter.And(
+                Builders<OutboxRecord>.Filter.Eq(x => x.DispatchedAtUtc, null),
+                Builders<OutboxRecord>.Filter.Eq(x => x.FailedAtUtc, null))
         };
         return outboxCollection.Indexes.CreateOneAsync(new CreateIndexModel<OutboxRecord>(keys, options), null, cancellationToken);
     }

@@ -1,4 +1,5 @@
-﻿using Whisper.Outbox.Abstractions;
+﻿using Microsoft.Extensions.Logging;
+using Whisper.Outbox.Abstractions;
 
 namespace Whisper.Outbox.UnitTests;
 public class OutboxInstallerTests
@@ -8,7 +9,8 @@ public class OutboxInstallerTests
     {
         var outboxInstaller = Substitute.For<IInstallOutbox>();
         var awaiter = new OutboxInstallerAwaiter();
-        var sut = new OutboxInstaller(outboxInstaller, awaiter);
+        var logger = Substitute.For<ILogger<OutboxInstaller>>();
+        var sut = new OutboxInstaller(outboxInstaller, awaiter, logger);
 
         await sut.StartAsync(CancellationToken.None);
 

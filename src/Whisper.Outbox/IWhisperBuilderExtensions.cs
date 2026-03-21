@@ -7,22 +7,18 @@ namespace Microsoft.Extensions.DependencyInjection;
 
 public static class IWhisperBuilderExtensions
 {
-    internal const string ServiceKey = "innerDispatcher";
-
-    public static IWhisperBuilder AddOutbox(this IWhisperBuilder hermesBuilder, Action<IOutboxBuilder> configure)
+    public static IWhisperBuilder AddOutbox(this IWhisperBuilder whisperBuilder, Action<IOutboxBuilder> configure)
     {
-        var domainEventDispatcherServiceDescriptors = hermesBuilder.Services
+        var domainEventDispatcherServiceDescriptors = whisperBuilder.Services
             .Where(s => s.ServiceType == typeof(IDispatchDomainEvents))
             .ToArray();
-        hermesBuilder.Services.RemoveAll<IDispatchDomainEvents>();
+        whisperBuilder.Services.RemoveAll<IDispatchDomainEvents>();
 
         foreach (var serviceDescriptor in domainEventDispatcherServiceDescriptors)
         {
-            AddKeyedFromDescriptor(hermesBuilder.Services, serviceDescriptor, ServiceKey);
+            AddKeyedFromDescriptor(whisperBuilder.Services, serviceDescriptor, ServiceKeys.InnerDispatcher);
         }
-        hermesBuilder.Services
-            .TryAddSingleton(new OutboxJsonOptions());
-        hermesBuilder.Services
+        whisperBuilder.Services
             .AddSingleton(TimeProvider.System)
             .AddSingleton<OutboxInstallerAwaiter>()
             .AddTransient<IUuidProvider, DefaultUuidProvider>()
@@ -39,8 +35,17 @@ public static class IWhisperBuilderExtensions
             .AddSingleton<IDomainEventSerializer, DomainEventSerializer>()
             .AddHostedService<OutboxInstaller>()
             .AddHostedService<OutboxWorker>();
-        configure?.Invoke(new OutboxBuilder(hermesBuilder.Services));
-        return hermesBuilder;
+        configure?.Invoke(new OutboxBuilder(whisperBuilder.Services));
+        return whisperBuilder;
+    }
+
+    /// <summary>
+    /// Configures the outbox background worker options such as batch size and polling interval.
+    /// </summary>
+    public static IOutboxBuilder ConfigureWorker(this IOutboxBuilder outboxBuilder, Action<OutboxWorkerOptions> configure)
+    {
+        outboxBuilder.Services.Configure(configure);
+        return outboxBuilder;
     }
 
     /// <summary>
@@ -50,9 +55,7 @@ public static class IWhisperBuilderExtensions
     /// </summary>
     public static IOutboxBuilder ConfigureSerializer(this IOutboxBuilder outboxBuilder, Action<OutboxJsonOptions> configure)
     {
-        var options = new OutboxJsonOptions();
-        configure(options);
-        outboxBuilder.Services.AddSingleton(options);
+        outboxBuilder.Services.Configure(configure);
         return outboxBuilder;
     }
 

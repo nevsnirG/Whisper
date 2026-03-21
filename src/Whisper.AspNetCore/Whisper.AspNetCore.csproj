@@ -44,4 +44,8 @@
 		<ProjectReference Include="..\Whisper.Abstractions\Whisper.Abstractions.csproj" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<InternalsVisibleTo Include="Whisper.AspNetCore.UnitTests" />
+	</ItemGroup>
+
 </Project>

@@ -10,6 +10,7 @@ public class IWhisperBuilderExtensionsTests
     public void AddOutbox_WhenAwaitIsNotReady_RegistersBlockingDispatcher()
     {
         var serviceCollection = new ServiceCollection() as IServiceCollection;
+        serviceCollection.AddOptions();
         serviceCollection.AddWhisper(b => b.AddOutbox(b => { }));
         serviceCollection.AddSingleton(Substitute.For<IOutboxStore>());
 
@@ -26,6 +27,7 @@ public class IWhisperBuilderExtensionsTests
     public void AddOutbox_WhenAwaiterReady_RegistersNonBlockingDispatcher()
     {
         var serviceCollection = new ServiceCollection() as IServiceCollection;
+        serviceCollection.AddOptions();
         serviceCollection.AddWhisper(b => b.AddOutbox(b => { }));
         serviceCollection.AddSingleton(Substitute.For<IOutboxStore>());
 
