@@ -43,6 +43,7 @@ public sealed class MongoDbOutboxIntegrationTests : IAsyncLifetime
                     b.AddMediatR();
                     b.AddOutbox(o =>
                     {
+                        o.ConfigureWorker(w => w.PollingIntervalMs = 50);
                         o.AddMongoDb(new MongoDbOutboxConfiguration
                         {
                             ConnectionString = _mongoFixture.ConnectionString,
@@ -76,21 +77,29 @@ public sealed class MongoDbOutboxIntegrationTests : IAsyncLifetime
             await dispatcher.Dispatch(testEvent, CancellationToken.None);
         }
 
-        // Assert - OutboxWorker polls every 1s, allow up to 10s for processing
-        await _handler.WaitForFirstEvent(TimeSpan.FromSeconds(10));
+        await _handler.WaitForFirstEvent(TimeSpan.FromSeconds(5));
 
         _handler.ReceivedEvents.Should().ContainSingle()
             .Which.Value.Should().Be(expectedValue);
 
-        // Assert the outbox record is marked as dispatched
+        // Allow SetDispatchedAt to complete after the handler has fired
         var config = _host.Services.GetRequiredService<MongoDbOutboxConfiguration>();
         var mongoClient = _host.Services.GetRequiredService<MongoClient>();
         var collection = mongoClient
             .GetDatabase(config.DatabaseName)
             .GetCollection<OutboxRecord>(config.CollectionName);
 
-        var records = await collection.Find(FilterDefinition<OutboxRecord>.Empty).ToListAsync();
-        records.Should().ContainSingle()
-            .Which.DispatchedAtUtc.Should().NotBeNull();
+        OutboxRecord? record = null;
+        for (var i = 0; i < 10; i++)
+        {
+            var records = await collection.Find(FilterDefinition<OutboxRecord>.Empty).ToListAsync();
+            record = records.SingleOrDefault();
+            if (record?.DispatchedAtUtc is not null)
+                break;
+            await Task.Delay(50);
+        }
+
+        record.Should().NotBeNull();
+        record!.DispatchedAtUtc.Should().NotBeNull();
     }
 }

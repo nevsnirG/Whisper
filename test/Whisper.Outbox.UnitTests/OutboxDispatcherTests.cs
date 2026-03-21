@@ -46,5 +46,19 @@ public class OutboxDispatcherTests
         await outboxStore.Received(1).Add(Arg.Any<OutboxRecord[]>(), CancellationToken.None);
     }
 
+    [Fact]
+    public async Task GivenEmptyDomainEvents_DoesNotCallStore()
+    {
+        var outboxStore = Substitute.For<IOutboxStore>();
+        var serializer = Substitute.For<IDomainEventSerializer>();
+        var timeProvider = new FakeTimeProvider();
+        var uuidProvider = new DefaultUuidProvider();
+        var sut = new OutboxDispatcher(outboxStore, serializer, timeProvider, uuidProvider);
+
+        await sut.Dispatch([], CancellationToken.None);
+
+        await outboxStore.DidNotReceiveWithAnyArgs().Add(Arg.Any<OutboxRecord[]>(), Arg.Any<CancellationToken>());
+    }
+
     private record TestEvent() : IDomainEvent;
 }
