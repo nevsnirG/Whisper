@@ -18,10 +18,10 @@ public static class IWhisperBuilderExtensions
         {
             AddKeyedFromDescriptor(whisperBuilder.Services, serviceDescriptor, ServiceKeys.InnerDispatcher);
         }
+        whisperBuilder.Services.TryAddTransient<IUuidProvider, DefaultUuidProvider>();
         whisperBuilder.Services
             .AddSingleton(TimeProvider.System)
             .AddSingleton<OutboxInstallerAwaiter>()
-            .AddTransient<IUuidProvider, DefaultUuidProvider>()
             .AddScoped<OutboxDispatcher>()
             .AddScoped<IDispatchDomainEvents>(static sp =>
             {
