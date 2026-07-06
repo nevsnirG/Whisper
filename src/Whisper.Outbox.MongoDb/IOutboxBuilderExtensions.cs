@@ -1,4 +1,5 @@
-﻿using MongoDB.Bson;
+﻿using Microsoft.Extensions.DependencyInjection.Extensions;
+using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
@@ -28,8 +29,8 @@ public static class IOutboxBuilderExtensions
             .AddSingleton(mongoDbOutboxConfiguration)
             .AddSingleton(sp => new MongoClient(sp.GetRequiredService<MongoDbOutboxConfiguration>().ConnectionString))
             .AddTransient<IInstallOutbox, MongoDbOutboxInstaller>()
-            .AddScoped<IMongoSessionProvider, EmptyMongoSessionProvider>()
             ;
+        outboxBuilder.Services.TryAddScoped<IMongoSessionProvider, EmptyMongoSessionProvider>();
         return outboxBuilder;
     }
 
@@ -43,7 +44,7 @@ public static class IOutboxBuilderExtensions
 
     private static void RegisterOutboxRecordClassMap()
     {
-        BsonClassMap.RegisterClassMap<OutboxRecord>(cm =>
+        BsonClassMap.TryRegisterClassMap<OutboxRecord>(cm =>
         {
             cm.AutoMap();
             cm.MapIdMember(u => u.Id)

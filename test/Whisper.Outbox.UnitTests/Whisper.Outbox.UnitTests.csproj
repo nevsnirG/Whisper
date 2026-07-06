@@ -20,6 +20,8 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\..\src\Whisper.Outbox\Whisper.Outbox.csproj" />
+		<ProjectReference Include="..\..\src\Whisper.Outbox.MongoDb\Whisper.Outbox.MongoDb.csproj" />
+		<ProjectReference Include="..\..\src\Whisper.Outbox.MongoDb.NServiceBus\Whisper.Outbox.MongoDb.NServiceBus.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>

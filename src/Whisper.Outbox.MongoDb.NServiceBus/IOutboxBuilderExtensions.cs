@@ -1,4 +1,5 @@
-﻿using Whisper.Outbox;
+﻿using Microsoft.Extensions.DependencyInjection.Extensions;
+using Whisper.Outbox;
 using Whisper.Outbox.MongoDb;
 using Whisper.Outbox.MongoDb.NServiceBus;
 
@@ -7,7 +8,7 @@ public static class IOutboxBuilderExtensions
 {
     public static IOutboxBuilder UseNServiceBusStorageSession(this IOutboxBuilder outboxBuilder)
     {
-        outboxBuilder.Services.AddScoped<IMongoSessionProvider, NServiceBusStorageSessionProvider>();
+        outboxBuilder.Services.Replace(ServiceDescriptor.Scoped<IMongoSessionProvider, NServiceBusStorageSessionProvider>());
         return outboxBuilder;
     }
 }

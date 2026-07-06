@@ -26,6 +26,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Whisper.Outbox.SqlServer\Whisper.Outbox.SqlServer.csproj" />
+    <ProjectReference Include="..\..\src\Whisper.Outbox.SqlServer.NServiceBus\Whisper.Outbox.SqlServer.NServiceBus.csproj" />
     <ProjectReference Include="..\..\src\Whisper.Outbox\Whisper.Outbox.csproj" />
     <ProjectReference Include="..\..\src\Whisper.Abstractions\Whisper.Abstractions.csproj" />
   </ItemGroup>
