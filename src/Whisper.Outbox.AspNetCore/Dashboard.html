@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Whisper Outbox</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, "Segoe UI", sans-serif; font-size: 14px; color: #1c2733; background: #f5f6f8; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 24px; background: #fff; border-bottom: 1px solid #dde1e6; }
+  h1 { font-size: 17px; margin: 0; }
+  main { max-width: 1200px; margin: 0 auto; padding: 16px 24px; }
+  button { font: inherit; font-size: 13px; padding: 5px 12px; border: 1px solid #b6bec9; border-radius: 4px; background: #fff; color: inherit; cursor: pointer; }
+  button:hover:not(:disabled) { background: #eef1f4; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: #2b5fa8; border-color: #2b5fa8; color: #fff; }
+  button.primary:hover:not(:disabled) { background: #24528f; }
+  button.danger { color: #a8262b; border-color: #cf9a9c; }
+  button.danger:hover:not(:disabled) { background: #faf1f1; }
+  .actions { display: flex; gap: 8px; }
+  #status { min-height: 20px; margin: 0 0 10px; font-size: 13px; color: #41546b; }
+  #status.error { color: #a8262b; }
+  table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #dde1e6; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e8ebee; font-size: 13px; vertical-align: top; }
+  th { background: #f0f2f5; font-weight: 600; white-space: nowrap; }
+  tr.record { cursor: pointer; }
+  tr.record:hover { background: #f7f9fb; }
+  tr.detail td { background: #fbfcfd; cursor: default; }
+  .mono { font-family: ui-monospace, Consolas, "Courier New", monospace; }
+  .nowrap { white-space: nowrap; }
+  .error-snippet { color: #8a1f23; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td.row-actions { white-space: nowrap; }
+  td.row-actions button { margin-right: 6px; }
+  .empty { color: #6b7887; text-align: center; padding: 24px; }
+  pre { margin: 0 0 12px; padding: 10px; font-size: 12px; font-family: ui-monospace, Consolas, "Courier New", monospace; background: #f0f2f5; border: 1px solid #e0e4e9; border-radius: 4px; overflow: auto; max-height: 320px; white-space: pre-wrap; word-break: break-word; }
+  h3 { margin: 0 0 6px; font-size: 13px; }
+  dl.meta { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0 0 12px; font-size: 13px; }
+  dl.meta dt { font-weight: 600; }
+  dl.meta dd { margin: 0; font-family: ui-monospace, Consolas, "Courier New", monospace; word-break: break-all; }
+  #pager { display: flex; align-items: center; gap: 12px; margin-top: 12px; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Whisper Outbox — failed records</h1>
+  <div class="actions">
+    <button id="refreshBtn">Refresh</button>
+    <button id="retryAllBtn" class="primary">Retry all</button>
+  </div>
+</header>
+<main>
+  <div id="status"></div>
+  <table>
+    <thead>
+      <tr>
+        <th>Id</th>
+        <th>Event</th>
+        <th>Enqueued (UTC)</th>
+        <th>Failed (UTC)</th>
+        <th>Retries</th>
+        <th>Last error</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div id="pager">
+    <button id="prevBtn">Previous</button>
+    <span id="pageInfo"></span>
+    <button id="nextBtn">Next</button>
+  </div>
+</main>
+<script>
+'use strict';
+
+// This page is served at the group root (e.g. /whisper/outbox), usually WITHOUT a trailing
+// slash. A plain relative URL would then resolve against the parent segment
+// (api/failed -> /whisper/api/failed), so every request is built from the exact mount path
+// with a trailing slash appended when missing. This keeps all fetches relative and makes
+// any mount pattern work.
+const BASE = location.pathname.endsWith('/') ? location.pathname : location.pathname + '/';
+const api = path => BASE + path;
+
+const PAGE_SIZE = 50;
+const COLUMN_COUNT = 7;
+
+let page = 1;
+let totalCount = 0;
+let expandedId = null;
+
+const rows = document.getElementById('rows');
+const status = document.getElementById('status');
+const pageInfo = document.getElementById('pageInfo');
+const prevBtn = document.getElementById('prevBtn');
+const nextBtn = document.getElementById('nextBtn');
+
+function setStatus(text, isError) {
+  status.textContent = text || '';
+  status.className = isError ? 'error' : '';
+}
+
+function shortId(id) {
+  return id.slice(0, 8);
+}
+
+function eventName(assemblyQualifiedType) {
+  const typeName = assemblyQualifiedType.split(',')[0].trim();
+  const lastDot = typeName.lastIndexOf('.');
+  return lastDot < 0 ? typeName : typeName.slice(lastDot + 1);
+}
+
+function firstLine(text) {
+  return text ? text.split(/\r?\n/)[0] : '';
+}
+
+function formatUtc(timestamp) {
+  if (!timestamp) return '—';
+  return timestamp.replace('T', ' ').replace(/(\.\d+)?(Z|[+-]\d\d:?\d\d)?$/, '');
+}
+
+function prettyPayload(payload) {
+  try {
+    return JSON.stringify(JSON.parse(payload), null, 2);
+  } catch {
+    return payload;
+  }
+}
+
+async function loadPage() {
+  try {
+    const response = await fetch(api(`api/failed?page=${page}&pageSize=${PAGE_SIZE}`));
+    if (!response.ok) throw new Error(`Loading failed records returned HTTP ${response.status}.`);
+    const data = await response.json();
+    page = data.page;
+    totalCount = data.totalCount;
+    renderRows(data.records);
+    renderPager();
+  } catch (error) {
+    setStatus(String(error), true);
+  }
+}
+
+function renderRows(records) {
+  expandedId = null;
+  rows.replaceChildren();
+  if (records.length === 0) {
+    renderEmptyRow();
+    return;
+  }
+  for (const record of records) rows.appendChild(buildRow(record));
+}
+
+function renderEmptyRow() {
+  const tr = document.createElement('tr');
+  const td = document.createElement('td');
+  td.colSpan = COLUMN_COUNT;
+  td.className = 'empty';
+  td.textContent = 'No failed records.';
+  tr.appendChild(td);
+  rows.appendChild(tr);
+}
+
+function buildRow(record) {
+  const tr = document.createElement('tr');
+  tr.className = 'record';
+  appendCell(tr, shortId(record.id), 'mono');
+  appendCell(tr, eventName(record.assemblyQualifiedType));
+  appendCell(tr, formatUtc(record.enqueuedAtUtc), 'nowrap');
+  appendCell(tr, formatUtc(record.failedAtUtc), 'nowrap');
+  appendCell(tr, String(record.retries));
+  appendCell(tr, firstLine(record.lastError), 'mono error-snippet');
+  tr.appendChild(buildRowActions(record.id));
+  tr.addEventListener('click', () => toggleDetail(tr, record.id));
+  return tr;
+}
+
+function appendCell(tr, text, className) {
+  const td = document.createElement('td');
+  td.textContent = text;
+  if (className) td.className = className;
+  tr.appendChild(td);
+  return td;
+}
+
+function buildRowActions(id) {
+  const td = document.createElement('td');
+  td.className = 'row-actions';
+  td.appendChild(actionButton('Retry', '', () => retryRecord(id)));
+  td.appendChild(actionButton('Delete', 'danger', () => deleteRecord(id)));
+  return td;
+}
+
+function actionButton(label, className, onClick) {
+  const button = document.createElement('button');
+  button.textContent = label;
+  if (className) button.className = className;
+  button.addEventListener('click', event => {
+    event.stopPropagation();
+    onClick();
+  });
+  return button;
+}
+
+async function toggleDetail(row, id) {
+  const wasExpanded = expandedId === id;
+  collapseDetail();
+  if (wasExpanded) return;
+
+  const cell = expandDetail(row, id);
+  try {
+    const response = await fetch(api('api/records/' + id));
+    if (response.status === 404) {
+      cell.textContent = 'Record no longer exists.';
+      return;
+    }
+    if (!response.ok) throw new Error(`Loading the record returned HTTP ${response.status}.`);
+    renderDetail(cell, await response.json());
+  } catch (error) {
+    cell.textContent = String(error);
+  }
+}
+
+function collapseDetail() {
+  document.getElementById('detailRow')?.remove();
+  expandedId = null;
+}
+
+function expandDetail(row, id) {
+  const tr = document.createElement('tr');
+  tr.id = 'detailRow';
+  tr.className = 'detail';
+  const td = document.createElement('td');
+  td.colSpan = COLUMN_COUNT;
+  td.textContent = 'Loading…';
+  tr.appendChild(td);
+  row.after(tr);
+  expandedId = id;
+  return td;
+}
+
+function renderDetail(cell, record) {
+  cell.replaceChildren();
+  cell.appendChild(buildDetailMeta(record));
+
+  cell.appendChild(sectionHeading('Payload'));
+  cell.appendChild(preBlock(prettyPayload(record.payload)));
+
+  if (record.lastError) {
+    cell.appendChild(sectionHeading('Last error'));
+    cell.appendChild(preBlock(record.lastError));
+  }
+}
+
+function buildDetailMeta(record) {
+  const meta = document.createElement('dl');
+  meta.className = 'meta';
+  addMeta(meta, 'Id', record.id);
+  addMeta(meta, 'Type', record.assemblyQualifiedType);
+  addMeta(meta, 'Enqueued (UTC)', formatUtc(record.enqueuedAtUtc));
+  addMeta(meta, 'Failed (UTC)', formatUtc(record.failedAtUtc));
+  addMeta(meta, 'Last error (UTC)', formatUtc(record.lastErrorAtUtc));
+  addMeta(meta, 'Next retry (UTC)', formatUtc(record.nextRetryAtUtc));
+  addMeta(meta, 'Retries', String(record.retries));
+  return meta;
+}
+
+function addMeta(meta, term, value) {
+  const dt = document.createElement('dt');
+  dt.textContent = term;
+  const dd = document.createElement('dd');
+  dd.textContent = value;
+  meta.appendChild(dt);
+  meta.appendChild(dd);
+}
+
+function sectionHeading(text) {
+  const heading = document.createElement('h3');
+  heading.textContent = text;
+  return heading;
+}
+
+function preBlock(text) {
+  const pre = document.createElement('pre');
+  pre.textContent = text;
+  return pre;
+}
+
+async function retryRecord(id) {
+  await sendCommand('api/records/' + id + '/retry', 'POST', `Record ${shortId(id)} re-queued for dispatch.`);
+}
+
+async function deleteRecord(id) {
+  if (!confirm('Delete this failed record permanently?')) return;
+  await sendCommand('api/records/' + id, 'DELETE', `Record ${shortId(id)} deleted.`);
+}
+
+async function sendCommand(path, method, successMessage) {
+  try {
+    const response = await fetch(api(path), { method });
+    if (response.status === 404) {
+      setStatus('The record was already retried or deleted.', false);
+    } else if (!response.ok) {
+      throw new Error(`${method} ${path} returned HTTP ${response.status}.`);
+    } else {
+      setStatus(successMessage, false);
+    }
+    await loadPage();
+  } catch (error) {
+    setStatus(String(error), true);
+  }
+}
+
+async function retryAll() {
+  try {
+    const response = await fetch(api('api/failed/retry-all'), { method: 'POST' });
+    if (!response.ok) throw new Error(`Retry all returned HTTP ${response.status}.`);
+    const data = await response.json();
+    setStatus(`Re-queued ${data.retried} record(s) for dispatch.`, false);
+    page = 1;
+    await loadPage();
+  } catch (error) {
+    setStatus(String(error), true);
+  }
+}
+
+function renderPager() {
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  if (page > totalPages) {
+    page = totalPages;
+    loadPage();
+    return;
+  }
+  pageInfo.textContent = `Page ${page} of ${totalPages} — ${totalCount} failed record(s)`;
+  prevBtn.disabled = page <= 1;
+  nextBtn.disabled = page >= totalPages;
+}
+
+document.getElementById('refreshBtn').addEventListener('click', () => loadPage());
+document.getElementById('retryAllBtn').addEventListener('click', retryAll);
+prevBtn.addEventListener('click', () => { page = Math.max(1, page - 1); loadPage(); });
+nextBtn.addEventListener('click', () => { page += 1; loadPage(); });
+
+loadPage();
+</script>
+</body>
+</html>

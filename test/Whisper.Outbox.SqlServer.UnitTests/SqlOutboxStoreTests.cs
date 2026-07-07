@@ -15,14 +15,16 @@ public class SqlOutboxStoreTests
 
     private static readonly DateTimeOffset Timestamp = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
+    private static readonly OutboxFailure Failure = new("Simulated failure", Timestamp);
+
     private static readonly Dictionary<string, Func<IOutboxStore, Task>> OperationMap = new()
     {
         ["Add"] = store => store.Add(CreateRecord(), CancellationToken.None),
         ["AddBatch"] = store => store.Add(new[] { CreateRecord(), CreateRecord() }, CancellationToken.None),
-        ["ReadNextBatch"] = store => store.ReadNextBatch(10, CancellationToken.None),
+        ["ReadNextBatch"] = store => store.ReadNextBatch(10, Timestamp, CancellationToken.None),
         ["SetDispatchedAt"] = store => store.SetDispatchedAt(CreateRecord(), Timestamp, CancellationToken.None),
-        ["IncrementRetries"] = store => store.IncrementRetries(CreateRecord(), CancellationToken.None),
-        ["SetFailedAt"] = store => store.SetFailedAt(CreateRecord(), Timestamp, CancellationToken.None),
+        ["ScheduleRetry"] = store => store.ScheduleRetry(CreateRecord(), Failure, Timestamp, CancellationToken.None),
+        ["SetFailedAt"] = store => store.SetFailedAt(CreateRecord(), Failure, CancellationToken.None),
     };
 
     public static TheoryData<string> Operations()

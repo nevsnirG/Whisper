@@ -9,249 +9,273 @@ namespace Whisper.Outbox.UnitTests;
 
 public class OutboxWorkerTests
 {
+    private static readonly DateTimeOffset StartTime = new(2026, 7, 7, 10, 0, 0, TimeSpan.Zero);
+
     [Fact]
     public async Task WhenOutboxEmpty_DoesNotDispatchAnything()
     {
-        var cancellationTokenSource = new CancellationTokenSource();
-        var outboxStore = Substitute.For<IOutboxStore>();
-        outboxStore.ReadNextBatch(Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns([])
-            .AndDoes(_ => cancellationTokenSource.Cancel());
-        var serializer = Substitute.For<IDomainEventSerializer>();
-        var timeProvider = new FakeTimeProvider();
-        var awaiter = new OutboxInstallerAwaiter();
-        awaiter.SignalCompletion();
-        var options = Options.Create(new OutboxWorkerOptions());
-        var serviceScopeFactory = Substitute.For<IServiceScopeFactory>();
-        var serviceScope = Substitute.For<IServiceScope>();
-        serviceScopeFactory.CreateScope().Returns(serviceScope);
-        var serviceProvider = Substitute.For<IServiceProvider>();
-        serviceScope.ServiceProvider.Returns(serviceProvider);
-        serviceProvider.GetService(typeof(IOutboxStore)).Returns(outboxStore);
-        var logger = Substitute.For<ILogger<OutboxWorker>>();
-        var sut = new OutboxWorker(serializer, timeProvider, awaiter, options, serviceScopeFactory, logger);
+        using var harness = new WorkerHarness();
+        harness.ReturnBatchOnceThenCancel();
 
-        await sut.StartAsync(cancellationTokenSource.Token);
+        await harness.RunToCompletion();
 
-        await outboxStore.ReceivedWithAnyArgs(1).ReadNextBatch(Arg.Any<int>(), default);
+        await harness.OutboxStore.Received(1).ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
+        await harness.OutboxStore.DidNotReceiveWithAnyArgs().SetDispatchedAt(default!, default, default);
+        await harness.OutboxStore.DidNotReceiveWithAnyArgs().ScheduleRetry(default!, default!, default, default);
+        await harness.OutboxStore.DidNotReceiveWithAnyArgs().SetFailedAt(default!, default!, default);
+    }
+
+    [Fact]
+    public async Task ReadNextBatch_ReceivesBatchSizeAndCurrentUtcTimeAsDueAt()
+    {
+        using var harness = new WorkerHarness();
+        harness.WorkerOptions.BatchSize = 25;
+        harness.ReturnBatchOnceThenCancel();
+
+        await harness.RunToCompletion();
+
+        await harness.OutboxStore.Received(1).ReadNextBatch(25, StartTime, Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task WhenOutboxNotEmpty_DispatchesRecords_AndMarksAsDispatched()
     {
-        var outboxRecord = new OutboxRecord()
-        {
-            Id = Guid.NewGuid(),
-            AssemblyQualifiedType = "SomeType",
-            EnqueuedAtUtc = DateTimeOffset.UtcNow,
-            DispatchedAtUtc = null,
-            Payload = "SomePayload"
-        };
+        using var harness = new WorkerHarness();
+        var outboxRecord = CreateRecord();
         var domainEvent = new TestEvent();
-        var cancellationTokenSource = new CancellationTokenSource();
-        var outboxStore = Substitute.For<IOutboxStore>();
-        outboxStore.ReadNextBatch(Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns([outboxRecord])
-            .AndDoes(_ => cancellationTokenSource.Cancel());
-        var serializer = Substitute.For<IDomainEventSerializer>();
-        serializer.Deserialize("SomePayload", "SomeType")
-            .Returns(domainEvent);
-        var timeProvider = new FakeTimeProvider();
-        var awaiter = new OutboxInstallerAwaiter();
-        awaiter.SignalCompletion();
-        var options = Options.Create(new OutboxWorkerOptions());
-        var serviceScopeFactory = Substitute.For<IServiceScopeFactory>();
-        var serviceScope = Substitute.For<IServiceScope>();
-        serviceScopeFactory.CreateScope()
-            .Returns(serviceScope);
-        var keyedServiceProvider = Substitute.For<IKeyedServiceProvider>();
-        serviceScope.ServiceProvider.Returns(keyedServiceProvider);
-        keyedServiceProvider.GetService(typeof(IOutboxStore)).Returns(outboxStore);
-        keyedServiceProvider.GetRequiredKeyedService(Arg.Any<Type>(), "innerDispatcher")
-            .Returns(Array.Empty<IDispatchDomainEvents>());
-        var logger = Substitute.For<ILogger<OutboxWorker>>();
-        var sut = new OutboxWorker(serializer, timeProvider, awaiter, options, serviceScopeFactory, logger);
+        harness.Serializer.Deserialize("SomePayload", "SomeType").Returns(domainEvent);
+        harness.ReturnBatchOnceThenCancel(outboxRecord);
 
-        await sut.StartAsync(cancellationTokenSource.Token);
+        await harness.RunToCompletion();
 
-        await outboxStore.ReceivedWithAnyArgs(1).ReadNextBatch(Arg.Any<int>(), default);
-        serializer.Received(1).Deserialize("SomePayload", "SomeType");
-        await outboxStore.Received(1).SetDispatchedAt(Arg.Any<OutboxRecord>(), timeProvider.GetUtcNow(), Arg.Any<CancellationToken>());
+        await harness.Dispatcher.Received(1).Dispatch(domainEvent, Arg.Any<CancellationToken>());
+        await harness.OutboxStore.Received(1).SetDispatchedAt(outboxRecord, StartTime, Arg.Any<CancellationToken>());
     }
 
     [Fact]
-    public async Task WhenDeserializationFails_MarksRecordAsFailed_AndContinues()
+    public async Task WhenDeserializationFails_MarksRecordAsFailedWithError_AndContinuesWithNextRecord()
     {
-        var outboxRecord1 = new OutboxRecord
-        {
-            Id = Guid.NewGuid(),
-            AssemblyQualifiedType = "BadType",
-            EnqueuedAtUtc = DateTimeOffset.UtcNow,
-            Payload = "BadPayload"
-        };
-        var outboxRecord2 = new OutboxRecord
-        {
-            Id = Guid.NewGuid(),
-            AssemblyQualifiedType = "GoodType",
-            EnqueuedAtUtc = DateTimeOffset.UtcNow,
-            Payload = "GoodPayload"
-        };
-        var domainEvent = new TestEvent();
-        var cancellationTokenSource = new CancellationTokenSource();
-        var outboxStore = Substitute.For<IOutboxStore>();
-        outboxStore.ReadNextBatch(Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns([outboxRecord1, outboxRecord2])
-            .AndDoes(_ => cancellationTokenSource.Cancel());
-        var serializer = Substitute.For<IDomainEventSerializer>();
-        serializer.When(s => s.Deserialize("BadPayload", "BadType"))
-            .Do(_ => throw new InvalidOperationException("Bad type"));
-        serializer.Deserialize("GoodPayload", "GoodType")
-            .Returns(domainEvent);
-        var timeProvider = new FakeTimeProvider();
-        var awaiter = new OutboxInstallerAwaiter();
-        awaiter.SignalCompletion();
-        var options = Options.Create(new OutboxWorkerOptions());
-        var serviceScopeFactory = Substitute.For<IServiceScopeFactory>();
-        var serviceScope = Substitute.For<IServiceScope>();
-        serviceScopeFactory.CreateScope().Returns(serviceScope);
-        var keyedServiceProvider = Substitute.For<IKeyedServiceProvider>();
-        serviceScope.ServiceProvider.Returns(keyedServiceProvider);
-        keyedServiceProvider.GetService(typeof(IOutboxStore)).Returns(outboxStore);
-        keyedServiceProvider.GetRequiredKeyedService(Arg.Any<Type>(), "innerDispatcher")
-            .Returns(Array.Empty<IDispatchDomainEvents>());
-        var logger = Substitute.For<ILogger<OutboxWorker>>();
-        var sut = new OutboxWorker(serializer, timeProvider, awaiter, options, serviceScopeFactory, logger);
+        using var harness = new WorkerHarness();
+        var badRecord = CreateRecord(payload: "BadPayload", type: "BadType");
+        var goodRecord = CreateRecord(payload: "GoodPayload", type: "GoodType");
+        var deserializationException = new InvalidOperationException("Bad type");
+        harness.Serializer.When(s => s.Deserialize("BadPayload", "BadType"))
+            .Do(_ => throw deserializationException);
+        harness.Serializer.Deserialize("GoodPayload", "GoodType").Returns(new TestEvent());
+        harness.ReturnBatchOnceThenCancel(badRecord, goodRecord);
+        var failures = harness.CaptureSetFailedAtCalls();
 
-        await sut.StartAsync(cancellationTokenSource.Token);
+        await harness.RunToCompletion();
 
-        // Deserialization failure → dead-lettered immediately
-        await outboxStore.Received(1).SetFailedAt(outboxRecord1, timeProvider.GetUtcNow(), Arg.Any<CancellationToken>());
-        // Second record still processed successfully
-        await outboxStore.Received(1).SetDispatchedAt(outboxRecord2, timeProvider.GetUtcNow(), Arg.Any<CancellationToken>());
+        var (failedRecord, failure) = failures.Should().ContainSingle().Subject;
+        failedRecord.Should().BeSameAs(badRecord);
+        failure.Error.Should().Be(deserializationException.ToString());
+        failure.OccurredAtUtc.Should().Be(StartTime);
+        await harness.OutboxStore.DidNotReceiveWithAnyArgs().ScheduleRetry(default!, default!, default, default);
+        await harness.OutboxStore.Received(1).SetDispatchedAt(goodRecord, StartTime, Arg.Any<CancellationToken>());
     }
 
     [Fact]
-    public async Task WhenDispatchFails_AndRetriesNotExhausted_IncrementsRetries()
+    public async Task WhenDispatchFails_AndRetriesNotExhausted_SchedulesRetryWithFailureDetails()
     {
-        var outboxRecord = new OutboxRecord
-        {
-            Id = Guid.NewGuid(),
-            AssemblyQualifiedType = "SomeType",
-            EnqueuedAtUtc = DateTimeOffset.UtcNow,
-            Retries = 0,
-            Payload = "SomePayload"
-        };
-        var domainEvent = new TestEvent();
-        var cancellationTokenSource = new CancellationTokenSource();
-        var outboxStore = Substitute.For<IOutboxStore>();
-        outboxStore.ReadNextBatch(Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns([outboxRecord])
-            .AndDoes(_ => cancellationTokenSource.Cancel());
-        var serializer = Substitute.For<IDomainEventSerializer>();
-        serializer.Deserialize("SomePayload", "SomeType").Returns(domainEvent);
-        var dispatcher = Substitute.For<IDispatchDomainEvents>();
-        dispatcher.When(d => d.Dispatch(Arg.Any<IDomainEvent>(), Arg.Any<CancellationToken>()))
-            .Do(_ => throw new Exception("Downstream service unavailable"));
-        var timeProvider = new FakeTimeProvider();
-        var awaiter = new OutboxInstallerAwaiter();
-        awaiter.SignalCompletion();
-        var options = Options.Create(new OutboxWorkerOptions { MaxRetries = 3 });
-        var serviceScopeFactory = Substitute.For<IServiceScopeFactory>();
-        var serviceScope = Substitute.For<IServiceScope>();
-        serviceScopeFactory.CreateScope().Returns(serviceScope);
-        var keyedServiceProvider = Substitute.For<IKeyedServiceProvider>();
-        serviceScope.ServiceProvider.Returns(keyedServiceProvider);
-        keyedServiceProvider.GetService(typeof(IOutboxStore)).Returns(outboxStore);
-        keyedServiceProvider.GetKeyedServices(typeof(IDispatchDomainEvents), "innerDispatcher")
-            .Returns(new object[] { dispatcher });
-        var logger = Substitute.For<ILogger<OutboxWorker>>();
-        var sut = new OutboxWorker(serializer, timeProvider, awaiter, options, serviceScopeFactory, logger);
+        using var harness = new WorkerHarness();
+        var outboxRecord = CreateRecord(retries: 0);
+        var dispatchException = new Exception("Downstream service unavailable");
+        harness.SetUpFailingDispatch(outboxRecord, dispatchException);
+        var retries = harness.CaptureScheduleRetryCalls();
 
-        await sut.StartAsync(cancellationTokenSource.Token);
+        await harness.RunToCompletion();
 
-        // Retries not exhausted → increment
-        await outboxStore.Received(1).IncrementRetries(outboxRecord, Arg.Any<CancellationToken>());
-        await outboxStore.DidNotReceive().SetFailedAt(outboxRecord, Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
+        var (retriedRecord, failure, nextRetryAtUtc) = retries.Should().ContainSingle().Subject;
+        retriedRecord.Should().BeSameAs(outboxRecord);
+        failure.Error.Should().Be(dispatchException.ToString());
+        failure.OccurredAtUtc.Should().Be(StartTime);
+        nextRetryAtUtc.Should().BeNull("no RetryDelay is configured, so the record is eligible at the next poll");
+        await harness.OutboxStore.DidNotReceiveWithAnyArgs().SetFailedAt(default!, default!, default);
     }
 
     [Fact]
-    public async Task WhenDispatchFails_AndRetriesExhausted_MarksAsFailed()
+    public async Task WhenDispatchFails_WithRetryDelay_SchedulesRetryUsingOneBasedAttemptOrdinal()
     {
-        var outboxRecord = new OutboxRecord
+        using var harness = new WorkerHarness();
+        var observedAttempts = new List<int>();
+        harness.RecoverabilityOptions.MaxRetries = 5;
+        harness.RecoverabilityOptions.RetryDelay = attempt =>
         {
-            Id = Guid.NewGuid(),
-            AssemblyQualifiedType = "SomeType",
-            EnqueuedAtUtc = DateTimeOffset.UtcNow,
-            Retries = 2, // Already retried twice, max is 3
-            Payload = "SomePayload"
+            observedAttempts.Add(attempt);
+            return TimeSpan.FromMinutes(attempt);
         };
-        var domainEvent = new TestEvent();
-        var cancellationTokenSource = new CancellationTokenSource();
-        var outboxStore = Substitute.For<IOutboxStore>();
-        outboxStore.ReadNextBatch(Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns([outboxRecord])
-            .AndDoes(_ => cancellationTokenSource.Cancel());
-        var serializer = Substitute.For<IDomainEventSerializer>();
-        serializer.Deserialize("SomePayload", "SomeType").Returns(domainEvent);
-        var dispatcher = Substitute.For<IDispatchDomainEvents>();
-        dispatcher.When(d => d.Dispatch(Arg.Any<IDomainEvent>(), Arg.Any<CancellationToken>()))
-            .Do(_ => throw new Exception("Downstream still down"));
-        var timeProvider = new FakeTimeProvider();
-        var awaiter = new OutboxInstallerAwaiter();
-        awaiter.SignalCompletion();
-        var options = Options.Create(new OutboxWorkerOptions { MaxRetries = 3 });
-        var serviceScopeFactory = Substitute.For<IServiceScopeFactory>();
-        var serviceScope = Substitute.For<IServiceScope>();
-        serviceScopeFactory.CreateScope().Returns(serviceScope);
-        var keyedServiceProvider = Substitute.For<IKeyedServiceProvider>();
-        serviceScope.ServiceProvider.Returns(keyedServiceProvider);
-        keyedServiceProvider.GetService(typeof(IOutboxStore)).Returns(outboxStore);
-        keyedServiceProvider.GetKeyedServices(typeof(IDispatchDomainEvents), "innerDispatcher")
-            .Returns(new object[] { dispatcher });
-        var logger = Substitute.For<ILogger<OutboxWorker>>();
-        var sut = new OutboxWorker(serializer, timeProvider, awaiter, options, serviceScopeFactory, logger);
+        // One retry already recorded: this dispatch is the second failed attempt.
+        var outboxRecord = CreateRecord(retries: 1);
+        harness.SetUpFailingDispatch(outboxRecord, new Exception("Still down"));
+        var retries = harness.CaptureScheduleRetryCalls();
 
-        await sut.StartAsync(cancellationTokenSource.Token);
+        await harness.RunToCompletion();
 
-        // Retries exhausted → dead-lettered
-        await outboxStore.Received(1).SetFailedAt(outboxRecord, timeProvider.GetUtcNow(), Arg.Any<CancellationToken>());
-        await outboxStore.DidNotReceive().IncrementRetries(outboxRecord, Arg.Any<CancellationToken>());
+        observedAttempts.Should().Equal(2);
+        retries.Should().ContainSingle()
+            .Which.NextRetryAtUtc.Should().Be(StartTime + TimeSpan.FromMinutes(2));
+    }
+
+    [Fact]
+    public async Task WhenDispatchFails_AndRetriesExhausted_MarksAsFailedWithFailureDetails()
+    {
+        using var harness = new WorkerHarness();
+        harness.RecoverabilityOptions.MaxRetries = 3;
+        var outboxRecord = CreateRecord(retries: 2); // Third total attempt: 2 + 1 >= 3
+        var dispatchException = new Exception("Downstream still down");
+        harness.SetUpFailingDispatch(outboxRecord, dispatchException);
+        var failures = harness.CaptureSetFailedAtCalls();
+
+        await harness.RunToCompletion();
+
+        var (failedRecord, failure) = failures.Should().ContainSingle().Subject;
+        failedRecord.Should().BeSameAs(outboxRecord);
+        failure.Error.Should().Be(dispatchException.ToString());
+        failure.OccurredAtUtc.Should().Be(StartTime);
+        await harness.OutboxStore.DidNotReceiveWithAnyArgs().ScheduleRetry(default!, default!, default, default);
+    }
+
+    [Fact]
+    public async Task WhenDispatchFails_WithUnrecoverableExceptionType_MarksAsFailedOnFirstAttempt()
+    {
+        using var harness = new WorkerHarness();
+        harness.RecoverabilityOptions.MaxRetries = 3;
+        harness.RecoverabilityOptions.UnrecoverableExceptionTypes.Add(typeof(InvalidOperationException));
+        var outboxRecord = CreateRecord(retries: 0);
+        var dispatchException = new InvalidOperationException("Poison message");
+        harness.SetUpFailingDispatch(outboxRecord, dispatchException);
+        var failures = harness.CaptureSetFailedAtCalls();
+
+        await harness.RunToCompletion();
+
+        var (failedRecord, failure) = failures.Should().ContainSingle().Subject;
+        failedRecord.Should().BeSameAs(outboxRecord);
+        failure.Error.Should().Be(dispatchException.ToString());
+        await harness.OutboxStore.DidNotReceiveWithAnyArgs().ScheduleRetry(default!, default!, default, default);
+    }
+
+    [Fact]
+    public async Task WhenDispatchFails_ErrorLongerThanMaxErrorLength_IsTruncated()
+    {
+        using var harness = new WorkerHarness();
+        var outboxRecord = CreateRecord(retries: 0);
+        var dispatchException = new Exception(new string('x', OutboxWorker.MaxErrorLength));
+        harness.SetUpFailingDispatch(outboxRecord, dispatchException);
+        var retries = harness.CaptureScheduleRetryCalls();
+
+        await harness.RunToCompletion();
+
+        dispatchException.ToString().Length.Should().BeGreaterThan(OutboxWorker.MaxErrorLength);
+        retries.Should().ContainSingle()
+            .Which.Failure.Error.Should().Be(dispatchException.ToString()[..OutboxWorker.MaxErrorLength]);
     }
 
     [Fact]
     public async Task WhenReadNextBatchThrows_LogsErrorAndContinues()
     {
+        using var harness = new WorkerHarness();
+        harness.WorkerOptions.PollingIntervalMs = 1;
         var callCount = 0;
-        var cancellationTokenSource = new CancellationTokenSource();
-        var outboxStore = Substitute.For<IOutboxStore>();
-        outboxStore.ReadNextBatch(Arg.Any<int>(), Arg.Any<CancellationToken>())
+        harness.OutboxStore.ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>())
             .Returns(_ =>
             {
                 callCount++;
                 if (callCount == 1)
                     throw new Exception("DB connection failed");
-                cancellationTokenSource.Cancel();
+                harness.Cts.Cancel();
                 return Array.Empty<OutboxRecord>();
             });
-        var serializer = Substitute.For<IDomainEventSerializer>();
-        var timeProvider = new FakeTimeProvider();
-        var awaiter = new OutboxInstallerAwaiter();
-        awaiter.SignalCompletion();
-        var options = Options.Create(new OutboxWorkerOptions { PollingIntervalMs = 1 });
-        var serviceScopeFactory = Substitute.For<IServiceScopeFactory>();
-        var serviceScope = Substitute.For<IServiceScope>();
-        serviceScopeFactory.CreateScope().Returns(serviceScope);
-        var serviceProvider = Substitute.For<IServiceProvider>();
-        serviceScope.ServiceProvider.Returns(serviceProvider);
-        serviceProvider.GetService(typeof(IOutboxStore)).Returns(outboxStore);
-        var logger = Substitute.For<ILogger<OutboxWorker>>();
-        var sut = new OutboxWorker(serializer, timeProvider, awaiter, options, serviceScopeFactory, logger);
 
-        await sut.StartAsync(cancellationTokenSource.Token);
-        await Task.Delay(200);
-        await sut.StopAsync(CancellationToken.None);
+        await harness.RunToCompletion();
 
-        await outboxStore.Received(2).ReadNextBatch(Arg.Any<int>(), Arg.Any<CancellationToken>());
+        await harness.OutboxStore.Received(2).ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
+    }
+
+    private static OutboxRecord CreateRecord(int retries = 0, string payload = "SomePayload", string type = "SomeType") => new()
+    {
+        Id = Guid.NewGuid(),
+        AssemblyQualifiedType = type,
+        EnqueuedAtUtc = StartTime,
+        Retries = retries,
+        Payload = payload,
+    };
+
+    private sealed class WorkerHarness : IDisposable
+    {
+        private readonly CancellationTokenSource _cts = new();
+        private ServiceProvider? _serviceProvider;
+
+        public IOutboxStore OutboxStore { get; } = Substitute.For<IOutboxStore>();
+        public IDomainEventSerializer Serializer { get; } = Substitute.For<IDomainEventSerializer>();
+        public IDispatchDomainEvents Dispatcher { get; } = Substitute.For<IDispatchDomainEvents>();
+        public FakeTimeProvider TimeProvider { get; } = new(StartTime);
+        public ILogger<OutboxWorker> Logger { get; } = Substitute.For<ILogger<OutboxWorker>>();
+        public OutboxWorkerOptions WorkerOptions { get; } = new();
+        public OutboxRecoverabilityOptions RecoverabilityOptions { get; } = new();
+
+        public CancellationTokenSource Cts => _cts;
+
+        public void ReturnBatchOnceThenCancel(params OutboxRecord[] records)
+        {
+            OutboxStore.ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>())
+                .Returns(records)
+                .AndDoes(_ => _cts.Cancel());
+        }
+
+        public void SetUpFailingDispatch(OutboxRecord outboxRecord, Exception dispatchException)
+        {
+            Serializer.Deserialize(outboxRecord.Payload, outboxRecord.AssemblyQualifiedType).Returns(new TestEvent());
+            Dispatcher.When(d => d.Dispatch(Arg.Any<IDomainEvent>(), Arg.Any<CancellationToken>()))
+                .Do(_ => throw dispatchException);
+            ReturnBatchOnceThenCancel(outboxRecord);
+        }
+
+        public List<(OutboxRecord Record, OutboxFailure Failure, DateTimeOffset? NextRetryAtUtc)> CaptureScheduleRetryCalls()
+        {
+            var calls = new List<(OutboxRecord, OutboxFailure, DateTimeOffset?)>();
+            OutboxStore.When(s => s.ScheduleRetry(Arg.Any<OutboxRecord>(), Arg.Any<OutboxFailure>(), Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>()))
+                .Do(ci => calls.Add((ci.ArgAt<OutboxRecord>(0), ci.ArgAt<OutboxFailure>(1), ci.ArgAt<DateTimeOffset?>(2))));
+            return calls;
+        }
+
+        public List<(OutboxRecord Record, OutboxFailure Failure)> CaptureSetFailedAtCalls()
+        {
+            var calls = new List<(OutboxRecord, OutboxFailure)>();
+            OutboxStore.When(s => s.SetFailedAt(Arg.Any<OutboxRecord>(), Arg.Any<OutboxFailure>(), Arg.Any<CancellationToken>()))
+                .Do(ci => calls.Add((ci.ArgAt<OutboxRecord>(0), ci.ArgAt<OutboxFailure>(1))));
+            return calls;
+        }
+
+        public async Task RunToCompletion()
+        {
+            var services = new ServiceCollection();
+            services.AddScoped(_ => OutboxStore);
+            services.AddKeyedScoped(ServiceKeys.InnerDispatcher, (_, _) => Dispatcher);
+            _serviceProvider = services.BuildServiceProvider();
+
+            var awaiter = new OutboxInstallerAwaiter();
+            awaiter.SignalCompletion();
+
+            using var worker = new OutboxWorker(
+                Serializer,
+                TimeProvider,
+                awaiter,
+                Options.Create(WorkerOptions),
+                Options.Create(RecoverabilityOptions),
+                _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+                Logger);
+
+            await worker.StartAsync(_cts.Token);
+            await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10));
+            await worker.StopAsync(CancellationToken.None);
+        }
+
+        public void Dispose()
+        {
+            _serviceProvider?.Dispose();
+            _cts.Dispose();
+        }
     }
 
     private record TestEvent() : IDomainEvent;

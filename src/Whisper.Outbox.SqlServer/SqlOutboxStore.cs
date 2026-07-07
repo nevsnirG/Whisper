@@ -48,18 +48,20 @@ VALUES (@Id, @EnqueuedAtUtc, @AssemblyQualifiedType, @Payload);";
         }
     }
 
-    public async Task<OutboxRecord[]> ReadNextBatch(int batchSize, CancellationToken cancellationToken)
+    public async Task<OutboxRecord[]> ReadNextBatch(int batchSize, DateTimeOffset dueAtUtc, CancellationToken cancellationToken)
     {
         var sql = $@"
 SELECT TOP (@take)
     Id, EnqueuedAtUtc, Retries, AssemblyQualifiedType, Payload
 FROM {QualifiedTableName()} WITH (READCOMMITTEDLOCK)
 WHERE DispatchedAtUtc IS NULL AND FailedAtUtc IS NULL
-ORDER BY Id ASC;";
+  AND (NextRetryAtUtc IS NULL OR NextRetryAtUtc <= @dueAtUtc)
+ORDER BY NextRetryAtUtc ASC, Id ASC;";
 
         await using var leaseScope = await AcquireLease(cancellationToken);
         using var cmd = new SqlCommand(sql, leaseScope.Connection, leaseScope.Transaction);
         cmd.Parameters.Add(new SqlParameter("@take", SqlDbType.Int) { Value = batchSize });
+        cmd.Parameters.Add(new SqlParameter("@dueAtUtc", SqlDbType.DateTimeOffset) { Value = dueAtUtc });
 
         var list = new List<OutboxRecord>(batchSize);
         await using var reader = await cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, cancellationToken);
@@ -85,16 +87,36 @@ ORDER BY Id ASC;";
             cancellationToken);
     }
 
-    public Task IncrementRetries(OutboxRecord outboxRecord, CancellationToken cancellationToken)
+    public Task ScheduleRetry(OutboxRecord outboxRecord, OutboxFailure failure, DateTimeOffset? nextRetryAtUtc, CancellationToken cancellationToken)
     {
-        return ExecuteUpdateByIdAsync("SET Retries = Retries + 1", outboxRecord.Id, _ => { }, cancellationToken);
+        return ExecuteUpdateByIdAsync(
+            "SET Retries = Retries + 1, NextRetryAtUtc = @nextRetryAtUtc, LastError = @lastError, LastErrorAtUtc = @lastErrorAtUtc",
+            outboxRecord.Id,
+            cmd =>
+            {
+                cmd.Parameters.Add(new SqlParameter("@nextRetryAtUtc", SqlDbType.DateTimeOffset) { Value = (object?)nextRetryAtUtc ?? DBNull.Value });
+                AddFailureParameters(cmd, failure);
+            },
+            cancellationToken);
     }
 
-    public Task SetFailedAt(OutboxRecord outboxRecord, DateTimeOffset failedAtUtc, CancellationToken cancellationToken)
+    public Task SetFailedAt(OutboxRecord outboxRecord, OutboxFailure failure, CancellationToken cancellationToken)
     {
-        return ExecuteUpdateByIdAsync("SET FailedAtUtc = @value", outboxRecord.Id, cmd =>
-            cmd.Parameters.Add(new SqlParameter("@value", SqlDbType.DateTimeOffset) { Value = failedAtUtc }),
+        return ExecuteUpdateByIdAsync(
+            "SET FailedAtUtc = @failedAtUtc, LastError = @lastError, LastErrorAtUtc = @lastErrorAtUtc",
+            outboxRecord.Id,
+            cmd =>
+            {
+                cmd.Parameters.Add(new SqlParameter("@failedAtUtc", SqlDbType.DateTimeOffset) { Value = failure.OccurredAtUtc });
+                AddFailureParameters(cmd, failure);
+            },
             cancellationToken);
+    }
+
+    private static void AddFailureParameters(SqlCommand cmd, OutboxFailure failure)
+    {
+        cmd.Parameters.Add(new SqlParameter("@lastError", SqlDbType.NVarChar, -1) { Value = failure.Error });
+        cmd.Parameters.Add(new SqlParameter("@lastErrorAtUtc", SqlDbType.DateTimeOffset) { Value = failure.OccurredAtUtc });
     }
 
     private Task ExecuteUpdateByIdAsync(string setClause, Guid id, Action<SqlCommand> addParameters, CancellationToken cancellationToken)
@@ -148,8 +170,5 @@ WHERE Id = @id;";
     }
 
     private string QualifiedTableName()
-        => $"{Bracket(sqlOutboxConfiguration.SchemaName)}.{Bracket(sqlOutboxConfiguration.TableName)}";
-
-    private static string Bracket(string identifier)
-        => $"[{identifier.Replace("[", string.Empty).Replace("]", string.Empty)}]";
+        => $"{SqlIdentifier.Bracket(sqlOutboxConfiguration.SchemaName)}.{SqlIdentifier.Bracket(sqlOutboxConfiguration.TableName)}";
 }

@@ -49,6 +49,19 @@ public static class IWhisperBuilderExtensions
     }
 
     /// <summary>
+    /// Configures how the outbox worker handles failed dispatch attempts: maximum retries,
+    /// the delay before the next attempt (e.g. exponential backoff) and which exceptions are
+    /// unrecoverable. The effective retry moment is the first poll at or after the scheduled
+    /// <see cref="OutboxRecord.NextRetryAtUtc"/>; delays shorter than the polling interval
+    /// behave like immediate retries.
+    /// </summary>
+    public static IOutboxBuilder ConfigureRecoverability(this IOutboxBuilder outboxBuilder, Action<OutboxRecoverabilityOptions> configure)
+    {
+        outboxBuilder.Services.Configure(configure);
+        return outboxBuilder;
+    }
+
+    /// <summary>
     /// Configures custom JSON serialization options for the outbox.
     /// Use this to register <see cref="System.Text.Json.Serialization.JsonConverter"/>s
     /// for value types that System.Text.Json cannot deserialize by default.

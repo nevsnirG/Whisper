@@ -22,6 +22,7 @@ public static class IOutboxBuilderExtensions
 
         outboxBuilder.Services
             .AddScoped<IOutboxStore>(static sp => new MongoDbOutboxStore(sp.GetOutboxCollection(), sp.GetService<IMongoSessionProvider>()))
+            .AddSingleton<IOutboxManagementStore>(static sp => new MongoDbOutboxManagementStore(sp.GetOutboxCollection()))
             .AddSingleton(mongoDbOutboxConfiguration)
             .AddSingleton(sp => new MongoClient(sp.GetRequiredService<MongoDbOutboxConfiguration>().ConnectionString))
             .AddTransient<IInstallOutbox, MongoDbOutboxInstaller>()
@@ -97,6 +98,12 @@ public static class IOutboxBuilderExtensions
             cm.AutoMap();
             cm.MapIdMember(u => u.Id)
                 .SetSerializer(new GuidSerializer(GuidRepresentation.Standard));
+            // BsonType.DateTime is mandatory here: the driver's default DateTimeOffset (array)
+            // representation breaks $lte filters and sorts on these members.
+            cm.MapMember(u => u.NextRetryAtUtc)
+                .SetSerializer(new NullableSerializer<DateTimeOffset>(new DateTimeOffsetSerializer(BsonType.DateTime)));
+            cm.MapMember(u => u.LastErrorAtUtc)
+                .SetSerializer(new NullableSerializer<DateTimeOffset>(new DateTimeOffsetSerializer(BsonType.DateTime)));
         });
     }
 }

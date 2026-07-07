@@ -10,6 +10,7 @@ public static class IOutboxBuilderExtensions
     {
         outboxBuilder.Services
             .AddScoped<IOutboxStore>(static sp => new SqlOutboxStore(sp.GetRequiredService<SqlOutboxConfiguration>(), sp.GetService<IConnectionLeaseProvider>()))
+            .AddSingleton<IOutboxManagementStore, SqlOutboxManagementStore>()
             .AddSingleton(sqlOutboxConfiguration)
             .AddTransient<IInstallOutbox, SqlOutboxInstaller>()
             .Replace(ServiceDescriptor.Transient<IUuidProvider, SqlServerUuidProvider>())
