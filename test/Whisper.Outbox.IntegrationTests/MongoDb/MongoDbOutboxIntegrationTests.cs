@@ -90,7 +90,8 @@ public sealed class MongoDbOutboxIntegrationTests : IAsyncLifetime
             .GetCollection<OutboxRecord>(config.CollectionName);
 
         OutboxRecord? record = null;
-        for (var i = 0; i < 10; i++)
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (DateTime.UtcNow < deadline)
         {
             var records = await collection.Find(FilterDefinition<OutboxRecord>.Empty).ToListAsync();
             record = records.SingleOrDefault();

@@ -37,8 +37,6 @@ VALUES (@Id, @EnqueuedAtUtc, @AssemblyQualifiedType, @Payload);";
         var pType = cmd.Parameters.Add("@AssemblyQualifiedType", SqlDbType.NVarChar, 2048);
         var pPayload = cmd.Parameters.Add("@Payload", SqlDbType.NVarChar, -1);
 
-        await cmd.PrepareAsync(cancellationToken);
-
         foreach (var r in outboxRecords)
         {
             pId.Value = r.Id;
