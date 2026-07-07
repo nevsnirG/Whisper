@@ -8,6 +8,7 @@ internal sealed class SqlOutboxInstaller(SqlOutboxConfiguration sqlOutboxConfigu
     public async Task InstallCollection(CancellationToken cancellationToken)
     {
         using var connection = new SqlConnection(sqlOutboxConfiguration.ConnectionString);
+        var rawSchemaName = Strip(sqlOutboxConfiguration.SchemaName);
         var qualifiedSchema = Clean(sqlOutboxConfiguration.SchemaName);
         var qualifiedTable = QualifyTableName(qualifiedSchema, sqlOutboxConfiguration.TableName);
         await using var command = connection.CreateCommand();
@@ -61,7 +62,7 @@ internal sealed class SqlOutboxInstaller(SqlOutboxConfiguration sqlOutboxConfigu
         WHERE DispatchedAtUtc IS NULL AND FailedAtUtc IS NULL;
     END;
 ";
-        command.Parameters.Add(new SqlParameter("@schema", SqlDbType.NVarChar, 128) { Value = qualifiedSchema });
+        command.Parameters.Add(new SqlParameter("@schema", SqlDbType.NVarChar, 128) { Value = rawSchemaName });
 
         await connection.OpenAsync(cancellationToken);
         await command.ExecuteNonQueryAsync(cancellationToken);
@@ -73,5 +74,8 @@ internal sealed class SqlOutboxInstaller(SqlOutboxConfiguration sqlOutboxConfigu
     }
 
     private static string Clean(string identifier)
-        => $"[{identifier.Replace("[", string.Empty).Replace("]", string.Empty)}]";
+        => $"[{Strip(identifier)}]";
+
+    private static string Strip(string identifier)
+        => identifier.Replace("[", string.Empty).Replace("]", string.Empty);
 }
