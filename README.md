@@ -236,7 +236,7 @@ await session.CommitTransactionAsync(ct); // the host owns commit/abort
 
 > A scope that never calls `Initialize` gets plain (session-less) writes.
 
-**NServiceBus storage session**
+**NServiceBus storage session** (requires `Whisper.Outbox.MongoDb.NServiceBus`)
 
 ```csharp
 b.AddOutbox(ob =>
@@ -245,6 +245,8 @@ b.AddOutbox(ob =>
     ob.UseNServiceBusStorageSession(); // IMongoSessionProvider backed by the NServiceBus storage session
 });
 ```
+
+> Internally routes through `UseMongoSessionProvider`, so the same ownership rule applies: NServiceBus owns the session; Whisper only uses it. May be called before or after `AddMongoDb` — registration is order-independent.
 
 **Custom unit of work**
 
@@ -332,7 +334,7 @@ tx.Complete();
 
 > `TransactionScopeAsyncFlowOption.Enabled` is required with async code. Sequential opens against the same connection string reuse the transaction-affiliated pooled connection, so a single SQL Server does not escalate to MSDTC — but concurrent connections inside the scope can escalate to a distributed transaction.
 
-**NServiceBus storage session**
+**NServiceBus storage session** (requires `Whisper.Outbox.SqlServer.NServiceBus`)
 
 ```csharp
 b.AddOutbox(ob =>
@@ -341,6 +343,8 @@ b.AddOutbox(ob =>
     ob.UseNServiceBusStorageSession(); // IConnectionLeaseProvider backed by the NServiceBus storage session
 });
 ```
+
+> Internally routes through `UseConnectionLeaseProvider`, so the same ownership rule applies: NServiceBus owns the connection and transaction; Whisper only uses them. May be called before or after `AddSqlServer` — registration is order-independent.
 
 **Custom unit of work**
 
@@ -369,28 +373,6 @@ b.AddOutbox(ob =>
 > `UseConnectionLeaseProvider` also has an overload taking a `Func<IServiceProvider, TProvider>` factory:  
 > `ob.UseConnectionLeaseProvider(sp => new UnitOfWorkConnectionLeaseProvider(sp.GetRequiredService<MyUnitOfWork>()));`  
 > Registering `IConnectionLeaseProvider` directly in DI is honored too, but the builder method is the intended path.
-
-### NServiceBus adapters
-
-Re-use the NServiceBus storage session as the transaction context. `UseNServiceBusStorageSession()` may be called before or after `AddMongoDb` / `AddSqlServer` — registration is order-independent. Internally it routes through `UseMongoSessionProvider` / `UseConnectionLeaseProvider`, so the same ownership rule applies: NServiceBus owns the session/connection; Whisper only uses it.
-
-**MongoDB**
-```csharp
-b.AddOutbox(ob =>
-{
-    ob.AddMongoDb(...);
-    ob.UseNServiceBusStorageSession(); // IMongoSessionProvider from NServiceBus
-});
-```
-
-**SQL Server**
-```csharp
-b.AddOutbox(ob =>
-{
-    ob.AddSqlServer(...);
-    ob.UseNServiceBusStorageSession(); // IConnectionLeaseProvider from NServiceBus
-});
-```
 
 ### Worker configuration & retry semantics
 
