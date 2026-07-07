@@ -24,11 +24,20 @@ internal sealed class MongoDbOutboxStore(IMongoCollection<OutboxRecord> outboxCo
             return outboxCollection.InsertManyAsync(outboxRecords, options, cancellationToken);
     }
 
-    public async Task<OutboxRecord[]> ReadNextBatch(int batchSize, CancellationToken cancellationToken)
+    public async Task<OutboxRecord[]> ReadNextBatch(int batchSize, DateTimeOffset dueAtUtc, CancellationToken cancellationToken)
     {
-        var cursor = await outboxCollection.Find(x => x.DispatchedAtUtc == null && x.FailedAtUtc == null)
-            .SortBy(x => x.Id)
+        var filter = Builders<OutboxRecord>.Filter.And(
+            Builders<OutboxRecord>.Filter.Eq(x => x.DispatchedAtUtc, null),
+            Builders<OutboxRecord>.Filter.Eq(x => x.FailedAtUtc, null),
+            Builders<OutboxRecord>.Filter.Or(
+                Builders<OutboxRecord>.Filter.Eq(x => x.NextRetryAtUtc, null),
+                Builders<OutboxRecord>.Filter.Lte(x => x.NextRetryAtUtc, (DateTimeOffset?)dueAtUtc)));
+
+        var cursor = await outboxCollection.Find(filter)
+            .SortBy(x => x.NextRetryAtUtc)
+            .ThenBy(x => x.Id)
             .Limit(batchSize)
+            .Project<OutboxRecord>(Builders<OutboxRecord>.Projection.Exclude(x => x.LastError))
             .ToListAsync(cancellationToken);
 
         return [.. cursor];
@@ -41,17 +50,24 @@ internal sealed class MongoDbOutboxStore(IMongoCollection<OutboxRecord> outboxCo
             cancellationToken);
     }
 
-    public Task IncrementRetries(OutboxRecord outboxRecord, CancellationToken cancellationToken)
+    public Task ScheduleRetry(OutboxRecord outboxRecord, OutboxFailure failure, DateTimeOffset? nextRetryAtUtc, CancellationToken cancellationToken)
     {
         return UpdateByIdAsync(outboxRecord.Id,
-            Builders<OutboxRecord>.Update.Inc(or => or.Retries, 1),
+            Builders<OutboxRecord>.Update
+                .Inc(or => or.Retries, 1)
+                .Set(or => or.NextRetryAtUtc, nextRetryAtUtc)
+                .Set(or => or.LastError, failure.Error)
+                .Set(or => or.LastErrorAtUtc, (DateTimeOffset?)failure.OccurredAtUtc),
             cancellationToken);
     }
 
-    public Task SetFailedAt(OutboxRecord outboxRecord, DateTimeOffset failedAtUtc, CancellationToken cancellationToken)
+    public Task SetFailedAt(OutboxRecord outboxRecord, OutboxFailure failure, CancellationToken cancellationToken)
     {
         return UpdateByIdAsync(outboxRecord.Id,
-            Builders<OutboxRecord>.Update.Set(or => or.FailedAtUtc, failedAtUtc),
+            Builders<OutboxRecord>.Update
+                .Set(or => or.FailedAtUtc, (DateTimeOffset?)failure.OccurredAtUtc)
+                .Set(or => or.LastError, failure.Error)
+                .Set(or => or.LastErrorAtUtc, (DateTimeOffset?)failure.OccurredAtUtc),
             cancellationToken);
     }
 

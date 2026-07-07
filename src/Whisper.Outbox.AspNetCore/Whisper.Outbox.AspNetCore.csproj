@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net8.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+
+		<PackageId>Whisper.Outbox.AspNetCore</PackageId>
+		<Version>1.0.0</Version>
+		<Authors>Ken van Grinsven</Authors>
+		<Company>Grinsven Software Solutions</Company>
+
+		<GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+		<IncludeSymbols>true</IncludeSymbols>
+		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
+		<PackageTags>Domain events</PackageTags>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+		<PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
+		<IsPackable>true</IsPackable>
+		<Title>Whisper.Outbox.AspNetCore</Title>
+		<Description>Host-mounted management dashboard and JSON API for failed Whisper outbox records.</Description>
+		<PackageProjectUrl>https://github.com/nevsnirG/Whisper</PackageProjectUrl>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<RepositoryUrl>https://github.com/nevsnirG/Whisper</RepositoryUrl>
+		<PackageIcon>whisper.png</PackageIcon>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<EmbeddedResource Include="Dashboard.html" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\Whisper.Outbox\Whisper.Outbox.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="Whisper.Outbox.AspNetCore.UnitTests" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Include="..\..\README.md">
+			<Pack>True</Pack>
+			<PackagePath>\</PackagePath>
+		</None>
+		<None Include="..\..\whisper.png">
+			<Pack>True</Pack>
+			<PackagePath>\</PackagePath>
+		</None>
+	</ItemGroup>
+
+</Project>

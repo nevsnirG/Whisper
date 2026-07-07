@@ -12,10 +12,15 @@ internal sealed class OutboxWorker(IDomainEventSerializer domainEventSerializer,
                                    TimeProvider timeProvider,
                                    OutboxInstallerAwaiter outboxInstallerAwaiter,
                                    IOptions<OutboxWorkerOptions> outboxWorkerOptions,
+                                   IOptions<OutboxRecoverabilityOptions> outboxRecoverabilityOptions,
                                    IServiceScopeFactory serviceScopeFactory,
                                    ILogger<OutboxWorker> logger) : BackgroundService
 {
+    internal const int MaxErrorLength = 32_768;
+
     private readonly OutboxWorkerOptions _outboxWorkerOptions = outboxWorkerOptions.Value;
+    private readonly OutboxRecoverabilityOptions _recoverabilityOptions = outboxRecoverabilityOptions.Value;
+    private readonly RecoverabilityPolicy _recoverabilityPolicy = new(outboxRecoverabilityOptions.Value, logger);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -50,7 +55,7 @@ internal sealed class OutboxWorker(IDomainEventSerializer domainEventSerializer,
     {
         using var scope = serviceScopeFactory.CreateScope();
         var outboxStore = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
-        var outboxRecordBatch = await outboxStore.ReadNextBatch(_outboxWorkerOptions.BatchSize, cancellationToken);
+        var outboxRecordBatch = await outboxStore.ReadNextBatch(_outboxWorkerOptions.BatchSize, timeProvider.GetUtcNow(), cancellationToken);
 
         if (outboxRecordBatch is [])
             return;
@@ -61,9 +66,9 @@ internal sealed class OutboxWorker(IDomainEventSerializer domainEventSerializer,
 
     private async Task ProcessOutboxRecord(IOutboxStore outboxStore, OutboxRecord outboxRecord, CancellationToken cancellationToken)
     {
-        if (!TryDeserialize(outboxRecord, out var domainEvent))
+        if (!TryDeserialize(outboxRecord, out var domainEvent, out var deserializationError))
         {
-            await outboxStore.SetFailedAt(outboxRecord, timeProvider.GetUtcNow(), cancellationToken);
+            await outboxStore.SetFailedAt(outboxRecord, CreateFailure(deserializationError), cancellationToken);
             return;
         }
 
@@ -78,17 +83,19 @@ internal sealed class OutboxWorker(IDomainEventSerializer domainEventSerializer,
         }
     }
 
-    private bool TryDeserialize(OutboxRecord record, [NotNullWhen(true)] out IDomainEvent? domainEvent)
+    private bool TryDeserialize(OutboxRecord record, [NotNullWhen(true)] out IDomainEvent? domainEvent, [NotNullWhen(false)] out Exception? error)
     {
         try
         {
             domainEvent = domainEventSerializer.Deserialize(record.Payload, record.AssemblyQualifiedType);
+            error = null;
             return true;
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Permanent deserialization failure for outbox record {OutboxRecordId}. Record will be marked as failed.", record.Id);
             domainEvent = null;
+            error = ex;
             return false;
         }
     }
@@ -106,17 +113,42 @@ internal sealed class OutboxWorker(IDomainEventSerializer domainEventSerializer,
 
     private async Task HandleDispatchFailure(IOutboxStore outboxStore, OutboxRecord record, Exception ex, CancellationToken cancellationToken)
     {
-        if (record.Retries + 1 >= _outboxWorkerOptions.MaxRetries)
+        var failure = CreateFailure(ex);
+
+        if (_recoverabilityPolicy.IsUnrecoverable(ex))
+        {
+            logger.LogError(ex, "Unrecoverable failure for outbox record {OutboxRecordId}. Record will be marked as failed.", record.Id);
+            await outboxStore.SetFailedAt(record, failure, cancellationToken);
+            return;
+        }
+
+        if (record.Retries + 1 >= _recoverabilityOptions.MaxRetries)
         {
             logger.LogError(ex, "Outbox record {OutboxRecordId} failed after {MaxRetries} retries. Record will be marked as failed.",
-                record.Id, _outboxWorkerOptions.MaxRetries);
-            await outboxStore.SetFailedAt(record, timeProvider.GetUtcNow(), cancellationToken);
+                record.Id, _recoverabilityOptions.MaxRetries);
+            await outboxStore.SetFailedAt(record, failure, cancellationToken);
+            return;
         }
+
+        var nextRetryAtUtc = _recoverabilityPolicy.NextRetryAt(record.Retries + 1, failure.OccurredAtUtc);
+        if (nextRetryAtUtc is null)
+            logger.LogWarning(ex, "Transient failure for outbox record {OutboxRecordId}, retry {Retry}/{MaxRetries}, next attempt at the next poll.",
+                record.Id, record.Retries + 1, _recoverabilityOptions.MaxRetries);
         else
-        {
-            logger.LogWarning(ex, "Transient failure for outbox record {OutboxRecordId}, retry {Retry}/{MaxRetries}.",
-                record.Id, record.Retries + 1, _outboxWorkerOptions.MaxRetries);
-            await outboxStore.IncrementRetries(record, cancellationToken);
-        }
+            logger.LogWarning(ex, "Transient failure for outbox record {OutboxRecordId}, retry {Retry}/{MaxRetries}, next attempt due at {NextRetryAtUtc}.",
+                record.Id, record.Retries + 1, _recoverabilityOptions.MaxRetries, nextRetryAtUtc);
+        await outboxStore.ScheduleRetry(record, failure, nextRetryAtUtc, cancellationToken);
+    }
+
+    private OutboxFailure CreateFailure(Exception exception)
+        => new(Truncate(exception.ToString()), timeProvider.GetUtcNow());
+
+    private static string Truncate(string error)
+    {
+        if (error.Length <= MaxErrorLength)
+            return error;
+
+        var length = char.IsHighSurrogate(error[MaxErrorLength - 1]) ? MaxErrorLength - 1 : MaxErrorLength;
+        return error[..length];
     }
 }

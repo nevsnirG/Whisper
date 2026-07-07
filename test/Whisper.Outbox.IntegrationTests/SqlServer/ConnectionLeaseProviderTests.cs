@@ -50,7 +50,7 @@ public sealed class ConnectionLeaseProviderTests : IAsyncLifetime
             await store.Add(record, CancellationToken.None);
 
             // The same transaction can read its own uncommitted write
-            var uncommitted = await store.ReadNextBatch(10, CancellationToken.None);
+            var uncommitted = await store.ReadNextBatch(10, DateTimeOffset.UtcNow, CancellationToken.None);
             uncommitted.Should().ContainSingle()
                 .Which.Id.Should().Be(record.Id);
         }

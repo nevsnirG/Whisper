@@ -116,12 +116,12 @@ public sealed class MongoDbOutboxStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task IncrementRetries_WithoutSessionProvider_UpdatesWithoutSession()
+    public async Task ScheduleRetry_WithoutSessionProvider_UpdatesWithoutSession()
     {
         var record = CreateRecord();
         var sut = new MongoDbOutboxStore(_collection, null);
 
-        await sut.IncrementRetries(record, _cts.Token);
+        await sut.ScheduleRetry(record, CreateFailure(), Timestamp.AddMinutes(5), _cts.Token);
 
         await _collection.Received(1).UpdateOneAsync(
             Arg.Any<FilterDefinition<OutboxRecord>>(),
@@ -132,12 +132,30 @@ public sealed class MongoDbOutboxStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task ScheduleRetry_WithActiveSession_UpdatesWithThatSession()
+    {
+        var record = CreateRecord();
+        var session = Substitute.For<IClientSessionHandle>();
+        var sut = new MongoDbOutboxStore(_collection, ProviderWithSession(session));
+
+        await sut.ScheduleRetry(record, CreateFailure(), null, _cts.Token);
+
+        await _collection.Received(1).UpdateOneAsync(
+            Arg.Is(session),
+            Arg.Any<FilterDefinition<OutboxRecord>>(),
+            Arg.Any<UpdateDefinition<OutboxRecord>>(),
+            Arg.Any<UpdateOptions>(),
+            Arg.Is(_cts.Token));
+        await _collection.DidNotReceive().UpdateOneAsync(Arg.Any<FilterDefinition<OutboxRecord>>(), Arg.Any<UpdateDefinition<OutboxRecord>>(), Arg.Any<UpdateOptions>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task SetFailedAt_WithoutSessionProvider_UpdatesWithoutSession()
     {
         var record = CreateRecord();
         var sut = new MongoDbOutboxStore(_collection, null);
 
-        await sut.SetFailedAt(record, Timestamp, _cts.Token);
+        await sut.SetFailedAt(record, CreateFailure(), _cts.Token);
 
         await _collection.Received(1).UpdateOneAsync(
             Arg.Any<FilterDefinition<OutboxRecord>>(),
@@ -145,6 +163,24 @@ public sealed class MongoDbOutboxStoreTests : IDisposable
             Arg.Any<UpdateOptions>(),
             Arg.Is(_cts.Token));
         await _collection.DidNotReceive().UpdateOneAsync(Arg.Any<IClientSessionHandle>(), Arg.Any<FilterDefinition<OutboxRecord>>(), Arg.Any<UpdateDefinition<OutboxRecord>>(), Arg.Any<UpdateOptions>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SetFailedAt_WithActiveSession_UpdatesWithThatSession()
+    {
+        var record = CreateRecord();
+        var session = Substitute.For<IClientSessionHandle>();
+        var sut = new MongoDbOutboxStore(_collection, ProviderWithSession(session));
+
+        await sut.SetFailedAt(record, CreateFailure(), _cts.Token);
+
+        await _collection.Received(1).UpdateOneAsync(
+            Arg.Is(session),
+            Arg.Any<FilterDefinition<OutboxRecord>>(),
+            Arg.Any<UpdateDefinition<OutboxRecord>>(),
+            Arg.Any<UpdateOptions>(),
+            Arg.Is(_cts.Token));
+        await _collection.DidNotReceive().UpdateOneAsync(Arg.Any<FilterDefinition<OutboxRecord>>(), Arg.Any<UpdateDefinition<OutboxRecord>>(), Arg.Any<UpdateOptions>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -158,7 +194,7 @@ public sealed class MongoDbOutboxStoreTests : IDisposable
             .Returns(cursor);
         var sut = new MongoDbOutboxStore(_collection, null);
 
-        var result = await sut.ReadNextBatch(10, _cts.Token);
+        var result = await sut.ReadNextBatch(10, Timestamp, _cts.Token);
 
         result.Should().ContainSingle().Which.Should().BeSameAs(record);
     }
@@ -172,7 +208,7 @@ public sealed class MongoDbOutboxStoreTests : IDisposable
             .Returns(cursor);
         var sut = new MongoDbOutboxStore(_collection, null);
 
-        var result = await sut.ReadNextBatch(10, _cts.Token);
+        var result = await sut.ReadNextBatch(10, Timestamp, _cts.Token);
 
         result.Should().BeEmpty();
     }
@@ -191,4 +227,6 @@ public sealed class MongoDbOutboxStoreTests : IDisposable
         AssemblyQualifiedType = "Whisper.Test.Event, Whisper.Test",
         Payload = "{}",
     };
+
+    private static OutboxFailure CreateFailure() => new("Simulated failure", Timestamp);
 }
