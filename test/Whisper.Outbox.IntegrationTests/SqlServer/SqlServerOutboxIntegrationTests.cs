@@ -1,30 +1,31 @@
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using MediatR;
-using MongoDB.Driver;
 using Whisper;
 using Whisper.Abstractions;
 using Whisper.Outbox.IntegrationTests.Fakes;
-using Whisper.Outbox.MongoDb;
+using Whisper.Outbox.SqlServer;
 
-namespace Whisper.Outbox.IntegrationTests.MongoDb;
+namespace Whisper.Outbox.IntegrationTests.SqlServer;
 
-[Collection(MongoDbCollection.Name)]
-public sealed class MongoDbOutboxIntegrationTests : IAsyncLifetime
+[Collection(MsSqlCollection.Name)]
+public sealed class SqlServerOutboxIntegrationTests : IAsyncLifetime
 {
-    private readonly MongoDbFixture _mongoFixture;
+    private readonly MsSqlFixture _sqlFixture;
     private readonly TestDomainEventHandler _handler;
+    private string _connectionString = null!;
     private IHost _host = null!;
 
-    public MongoDbOutboxIntegrationTests(MongoDbFixture mongoFixture)
+    public SqlServerOutboxIntegrationTests(MsSqlFixture sqlFixture)
     {
-        _mongoFixture = mongoFixture;
+        _sqlFixture = sqlFixture;
         _handler = new TestDomainEventHandler();
     }
 
     public async Task InitializeAsync()
     {
-        var databaseName = $"whisper_test_{Guid.NewGuid():N}";
+        _connectionString = await _sqlFixture.CreateDatabaseAsync();
 
         _host = Host.CreateDefaultBuilder()
             .ConfigureServices(services =>
@@ -44,10 +45,9 @@ public sealed class MongoDbOutboxIntegrationTests : IAsyncLifetime
                     b.AddOutbox(o =>
                     {
                         o.ConfigureWorker(w => w.PollingIntervalMs = 50);
-                        o.AddMongoDb(new MongoDbOutboxConfiguration
+                        o.AddSqlServer(new SqlOutboxConfiguration
                         {
-                            ConnectionString = _mongoFixture.ConnectionString,
-                            DatabaseName = databaseName,
+                            ConnectionString = _connectionString,
                         });
                     });
                 });
@@ -77,23 +77,17 @@ public sealed class MongoDbOutboxIntegrationTests : IAsyncLifetime
             await dispatcher.Dispatch(testEvent, CancellationToken.None);
         }
 
-        await _handler.WaitForFirstEvent(TimeSpan.FromSeconds(5));
+        await _handler.WaitForFirstEvent(TimeSpan.FromSeconds(10));
 
         _handler.ReceivedEvents.Should().ContainSingle()
             .Which.Value.Should().Be(expectedValue);
 
         // Allow SetDispatchedAt to complete after the handler has fired
-        var config = _host.Services.GetRequiredService<MongoDbOutboxConfiguration>();
-        var mongoClient = _host.Services.GetRequiredService<MongoClient>();
-        var collection = mongoClient
-            .GetDatabase(config.DatabaseName)
-            .GetCollection<OutboxRecord>(config.CollectionName);
-
-        OutboxRecord? record = null;
+        OutboxRow? record = null;
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
         while (DateTime.UtcNow < deadline)
         {
-            var records = await collection.Find(FilterDefinition<OutboxRecord>.Empty).ToListAsync();
+            var records = await ReadOutboxRows();
             record = records.SingleOrDefault();
             if (record?.DispatchedAtUtc is not null)
                 break;
@@ -103,4 +97,25 @@ public sealed class MongoDbOutboxIntegrationTests : IAsyncLifetime
         record.Should().NotBeNull();
         record!.DispatchedAtUtc.Should().NotBeNull();
     }
+
+    private async Task<List<OutboxRow>> ReadOutboxRows()
+    {
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT Id, DispatchedAtUtc FROM [dbo].[outboxrecords]";
+
+        var rows = new List<OutboxRow>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            rows.Add(new OutboxRow(
+                reader.GetGuid(0),
+                await reader.IsDBNullAsync(1) ? null : reader.GetFieldValue<DateTimeOffset>(1)));
+        }
+
+        return rows;
+    }
+
+    private sealed record OutboxRow(Guid Id, DateTimeOffset? DispatchedAtUtc);
 }
