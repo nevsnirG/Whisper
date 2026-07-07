@@ -34,13 +34,13 @@ Traditional domain event patterns often force you to:
 
 | Package | Purpose |
 | --- | --- |
-| [**Whisper**](https://www.nuget.org/packages/Whisper) | Core tracking logic (`Whisper`, `IDomainEvent`, scopes) |
+| [**Whisper**](https://www.nuget.org/packages/Whisper) | Core tracking logic (`Whispers`, `IDomainEvent`, scopes) |
 | [**Whisper.Abstractions**](https://www.nuget.org/packages/Whisper.Abstractions) | Shared contracts (`IWhisperBuilder`, `IDispatchDomainEvents`) |
 | [**Whisper.MediatR**](https://www.nuget.org/packages/Whisper.MediatR) | MediatR integration — **automatically** dispatches raised events after each request |
 | [**Whisper.AspNetCore**](https://www.nuget.org/packages/Whisper.AspNetCore) | AspNetCore integration — **automatically** dispatches raised events after each request |
 | [**Whisper.Outbox**](https://www.nuget.org/packages/Whisper.Outbox) | Outbox infrastructure + background worker and installer |
-| [**Whisper.Outbox.MongoDb**](https://www.nuget.org/packages/Whisper.Outbox.MongoDb) | MongoDB outbox store + transaction participation via `IMongoSessionProvider` |
-| [**Whisper.Outbox.SqlServer**](https://www.nuget.org/packages/Whisper.Outbox.SqlServer) | SQL Server outbox store + transaction participation via `IConnectionLeaseProvider` |
+| [**Whisper.Outbox.MongoDb**](https://www.nuget.org/packages/Whisper.Outbox.MongoDb) | MongoDB outbox store + optional unit-of-work participation via `IMongoSessionProvider` |
+| [**Whisper.Outbox.SqlServer**](https://www.nuget.org/packages/Whisper.Outbox.SqlServer) | SQL Server outbox store + optional unit-of-work participation via `IConnectionLeaseProvider` |
 | [**Whisper.Outbox.MongoDb.NServiceBus**](https://www.nuget.org/packages/Whisper.Outbox.MongoDb.NServiceBus) | Adapter to reuse the NServiceBus **Mongo** storage session |
 | [**Whisper.Outbox.SqlServer.NServiceBus**](https://www.nuget.org/packages/Whisper.Outbox.SqlServer.NServiceBus) | Adapter to reuse the NServiceBus **SQL** storage session |
 
@@ -97,7 +97,7 @@ If you want isolation per request/unit of work, create a scope. Events raised in
 ```csharp
 using Whisper;
 
-using var scope = await Whispers.CreateScope();
+using var scope = Whispers.CreateScope();
 // ... domain operations that raise events
 var raised = Whispers.GetAndClearEvents(); // events for this scope (and children)
 ```
@@ -174,11 +174,13 @@ var services = new ServiceCollection()
             {
                 ConnectionString = "mongodb://localhost:27017",
                 DatabaseName     = "appdb",
-                // CollectionName = "outboxrecords" // optional
+                // CollectionName = "outboxrecords" // optional, default shown
             });
         });
     });
 ```
+
+> `AddMongoDb` also has an overload taking a `Func<IServiceProvider, MongoDbOutboxConfiguration>` for configuration resolved from DI.
 
 **`IMongoSessionProvider`** (optional) lets the dispatch-side `Add` participate in your MongoDB session/transaction:
 
@@ -266,7 +268,9 @@ b.AddOutbox(ob =>
 });
 ```
 
-> `UseMongoSessionProvider` also has an overload taking a `Func<IServiceProvider, TProvider>` factory. Registering `IMongoSessionProvider` directly in DI is honored too, but the builder method is the intended path.
+> `UseMongoSessionProvider` also has an overload taking a `Func<IServiceProvider, TProvider>` factory:  
+> `ob.UseMongoSessionProvider(sp => new UnitOfWorkMongoSessionProvider(sp.GetRequiredService<MyUnitOfWork>()));`  
+> Registering `IMongoSessionProvider` directly in DI is honored too, but the builder method is the intended path.
 
 ### SQL Server outbox
 
@@ -285,8 +289,8 @@ var services = new ServiceCollection()
             ob.AddSqlServer(new()
             {
                 ConnectionString = "Server=.;Database=AppDb;Trusted_Connection=True;Encrypt=False;",
-                SchemaName       = "outbox",
-                TableName        = "OutboxRecords"
+                SchemaName       = "outbox",        // optional, default "dbo"
+                TableName        = "OutboxRecords"  // optional, default "outboxrecords"
             });
         });
     });
@@ -315,6 +319,18 @@ public sealed record ConnectionLease(SqlConnection Connection, SqlTransaction? T
 ```csharp
 b.AddOutbox(ob => ob.AddSqlServer(new() { /* ... */ }));
 ```
+
+**`TransactionScope` — zero-code opt-in**
+
+On this no-provider path, the `SqlConnection` Whisper opens enlists in an ambient `System.Transactions.TransactionScope` by default (`Enlist=true`). Wrap the use case in a scope and outbox writes plus your own SQL join one transaction that the **host** completes:
+
+```csharp
+using var tx = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled);
+// ... host SQL work + domain operations that raise events
+tx.Complete();
+```
+
+> `TransactionScopeAsyncFlowOption.Enabled` is required with async code. Sequential opens against the same connection string reuse the transaction-affiliated pooled connection, so a single SQL Server does not escalate to MSDTC — but concurrent connections inside the scope can escalate to a distributed transaction.
 
 **NServiceBus storage session**
 
@@ -350,7 +366,9 @@ b.AddOutbox(ob =>
 
 > **Warning — every scope, no fallback:** a registered `IConnectionLeaseProvider` is consulted for **every** store operation, including the background worker’s own polling scopes, where no unit of work is active. There is deliberately no fallback. Your provider must return a usable, open connection in every scope — when no unit of work is active, open one yourself (e.g., from configuration); otherwise the worker can never read or dispatch outbox records. This applies to the SQL provider only: the Mongo equivalent handles it naturally (`Session` is `null` → plain writes).
 
-> `UseConnectionLeaseProvider` also has an overload taking a `Func<IServiceProvider, TProvider>` factory. Registering `IConnectionLeaseProvider` directly in DI is honored too, but the builder method is the intended path.
+> `UseConnectionLeaseProvider` also has an overload taking a `Func<IServiceProvider, TProvider>` factory:  
+> `ob.UseConnectionLeaseProvider(sp => new UnitOfWorkConnectionLeaseProvider(sp.GetRequiredService<MyUnitOfWork>()));`  
+> Registering `IConnectionLeaseProvider` directly in DI is honored too, but the builder method is the intended path.
 
 ### NServiceBus adapters
 
@@ -374,12 +392,73 @@ b.AddOutbox(ob =>
 });
 ```
 
+### Worker configuration & retry semantics
+
+The background worker polls the store on a fixed interval. Configure it via `ConfigureWorker`:
+
+```csharp
+b.AddOutbox(ob =>
+{
+    ob.AddSqlServer(new() { /* ... */ });
+    ob.ConfigureWorker(w =>
+    {
+        w.BatchSize         = 10;   // default
+        w.PollingIntervalMs = 1000; // default
+        w.MaxRetries        = 3;    // default
+    });
+});
+```
+
+Per record in a batch:
+
+- **Success:** the record is marked `DispatchedAtUtc`.
+- **Deserialization failure is permanent:** the record is marked `FailedAtUtc` immediately — no retry.
+- **Dispatch failure is transient:** `Retries` is incremented and the record is retried on a later poll; once `Retries + 1 >= MaxRetries`, it is marked `FailedAtUtc`.
+
+The worker loop catches and logs all errors and keeps polling.
+
+> Failed records **stay in the store** — there is no automatic cleanup. Monitor and purge rows/documents with `FailedAtUtc` set yourself.
+
+### Serializer configuration
+
+Domain events are serialized with System.Text.Json. Use `ConfigureSerializer` to register `JsonConverter`s for value types (e.g., readonly record structs) that System.Text.Json cannot deserialize using the default parameterless constructor:
+
+```csharp
+b.AddOutbox(ob =>
+{
+    ob.AddSqlServer(new() { /* ... */ });
+    ob.ConfigureSerializer(s => s.Converters.Add(new MyValueTypeConverter()));
+});
+```
+
+### Startup & installation
+
+`AddOutbox` registers an installer hosted service that prepares the store at startup:
+
+- **SQL Server:** creates the schema (if missing) and the table with a clustered primary key on `Id`, UTC check constraints, and the filtered index `IX_Outbox_Undispatched_ById`.
+- **MongoDB:** creates the partial index `ix_outbox_undispatched_by_id` on the outbox collection.
+
+Dispatches issued before installation completes are gated, not failed — they wait until the installer signals completion. The background worker waits the same way before its first poll.
+
+### UUID generation
+
+`AddOutbox` registers a default `IUuidProvider` that generates database-friendly UUIDs (via UUIDNext); `AddSqlServer` deterministically replaces it with a SQL Server-specific provider that generates sequential GUIDs, friendly to the clustered primary key.
+
+To override it, implement `IUuidProvider` (`Guid Provide()`) and register your implementation **after** the `AddWhisper(...)` call so it wins over the backend’s replacement:
+
+```csharp
+services.AddWhisper(b => b.AddOutbox(ob => ob.AddSqlServer(...)));
+services.Replace(ServiceDescriptor.Transient<IUuidProvider, MyUuidProvider>());
+```
+
+> Outbox records are read and dispatched in `Id` order, and on SQL Server `Id` is the clustered primary key — a non-sequential custom provider changes dispatch ordering behavior and fragments the clustered index.
+
 ---
 
 ## Clean Architecture fit
 
 - **Domain**  
-  References only `Whisper`. Raises events via `Whisper.About(...)`.  
+  References only `Whisper`. Raises events via `Whispers.About(...)`.  
   No `Events` collection, no leakage of domain events, no knowledge of dispatching or outbox.
 
 - **Application**  
@@ -425,14 +504,14 @@ public static IServiceCollection AddWhisper(
 
 ## Core API reference
 
-### `Whisper` (Whisper)
+### `Whispers` (Whisper)
 
 | Method | Description |
 | --- | --- |
-| `Task<IDisposable> CreateScope()` | Creates an ambient scope (nestable). |
+| `IDisposable CreateScope()` | Creates an ambient scope (nestable). |
 | `void About(IDomainEvent domainEvent)` | Raises a domain event from anywhere in the domain. |
-| `IReadOnlyCollection<IDomainEvent> Peek()` | Inspect currently raised events without clearing them. |
-| `IReadOnlyCollection<IDomainEvent> GetAndClearEvents()` | Retrieve and clear the collected events for the current (deepest) scope. |
+| `IDomainEvent[] Peek()` | Inspect currently raised events without clearing them. |
+| `IDomainEvent[] GetAndClearEvents()` | Retrieve and clear the collected events for the current (deepest) scope. |
 
 ### `IDispatchDomainEvents` (Whisper.Abstractions)
 
@@ -451,13 +530,13 @@ public interface IDispatchDomainEvents
 ## FAQ (quick)
 
 **Do I need to add an `Events` list to my aggregates?**  
-No. Raise events with `Whisper.About(...)` and let Whisper collect them.
+No. Raise events with `Whispers.About(...)` and let Whisper collect them.
 
 **Is it safe across `async/await`?**  
 Yes. Whisper uses `AsyncLocal<T>` to keep events bound to the current async execution flow.
 
 **How do duplicates get handled?**  
-Whisper does not attempt to deduplicate; if you need deduplication, implement it at your dispatcher/consumer side.
+Whisper does not attempt to deduplicate; if you need deduplication, implement it at your dispatcher/consumer side. Outbox publishing is at-least-once: a record that was dispatched successfully but not yet marked (e.g., a crash between the dispatch and `SetDispatchedAt`) is re-dispatched on a later poll — consumers must be idempotent.
 
 **Who commits/rolls back the DB transaction for the outbox?**  
 You do — if there is one. The rule: **Whisper disposes only what it creates, and it creates only when no provider is registered.** Without a provider there is no host transaction: Whisper opens and disposes its own `SqlConnection` per operation (SQL Server) or performs plain writes (MongoDB), and outbox records commit independently. With a provider registered (`UseConnectionLeaseProvider` / `UseMongoSessionProvider`), the host owns the connection/transaction/session entirely — Whisper only uses them and never begins, commits, rolls back, or disposes anything. The worker dispatches after your unit of work completes (at-least-once).
