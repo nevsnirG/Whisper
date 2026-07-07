@@ -41,6 +41,7 @@ Traditional domain event patterns often force you to:
 | [**Whisper.Outbox**](https://www.nuget.org/packages/Whisper.Outbox) | Outbox infrastructure + background worker and installer |
 | [**Whisper.Outbox.MongoDb**](https://www.nuget.org/packages/Whisper.Outbox.MongoDb) | MongoDB outbox store + optional unit-of-work participation via `IMongoSessionProvider` |
 | [**Whisper.Outbox.SqlServer**](https://www.nuget.org/packages/Whisper.Outbox.SqlServer) | SQL Server outbox store + optional unit-of-work participation via `IConnectionLeaseProvider` |
+| [**Whisper.Outbox.AspNetCore**](https://www.nuget.org/packages/Whisper.Outbox.AspNetCore) | Management dashboard + JSON API for failed outbox records (`MapWhisperOutbox`) |
 | [**Whisper.Outbox.MongoDb.NServiceBus**](https://www.nuget.org/packages/Whisper.Outbox.MongoDb.NServiceBus) | Adapter to reuse the NServiceBus **Mongo** storage session |
 | [**Whisper.Outbox.SqlServer.NServiceBus**](https://www.nuget.org/packages/Whisper.Outbox.SqlServer.NServiceBus) | Adapter to reuse the NServiceBus **SQL** storage session |
 
@@ -386,20 +387,49 @@ b.AddOutbox(ob =>
     {
         w.BatchSize         = 10;   // default
         w.PollingIntervalMs = 1000; // default
-        w.MaxRetries        = 3;    // default
     });
 });
 ```
 
-Per record in a batch:
+> **Breaking:** `MaxRetries` has moved from `OutboxWorkerOptions` to `OutboxRecoverabilityOptions` — see [Recoverability](#recoverability) below.
+
+The worker reads records that are **due**: not dispatched, not failed, and `NextRetryAtUtc` null or at/before now — ordered by `NextRetryAtUtc` ascending (nulls first), then `Id` ascending. With no retry delay configured this is identical to plain `Id` order. Per record in a batch:
 
 - **Success:** the record is marked `DispatchedAtUtc`.
 - **Deserialization failure is permanent:** the record is marked `FailedAtUtc` immediately — no retry.
-- **Dispatch failure is transient:** `Retries` is incremented and the record is retried on a later poll; once `Retries + 1 >= MaxRetries`, it is marked `FailedAtUtc`.
+- **Dispatch failure:** an **unrecoverable** exception (per the recoverability policy) fails the record immediately; otherwise `Retries` is incremented and the next attempt is scheduled via `NextRetryAtUtc`; once `Retries + 1 >= MaxRetries`, the record is marked `FailedAtUtc`.
+- **Every failed attempt persists the error on the record:** `LastError` (`Exception.ToString()`, truncated to 32,768 characters) and `LastErrorAtUtc` — so you can always see why a record is retrying or failed.
 
 The worker loop catches and logs all errors and keeps polling.
 
-> Failed records **stay in the store** — there is no automatic cleanup. Monitor and purge rows/documents with `FailedAtUtc` set yourself.
+> Failed records **stay in the store** — there is no automatic cleanup. Monitor them yourself or use the [management dashboard](#management-dashboard) to inspect, retry, or delete them.
+
+### Recoverability
+
+`ConfigureRecoverability` controls how failed dispatch attempts are handled — maximum attempts, the delay before the next attempt, and which exceptions are unrecoverable:
+
+```csharp
+b.AddOutbox(ob =>
+{
+    ob.AddSqlServer(new() { /* ... */ });
+    ob.ConfigureRecoverability(r =>
+    {
+        r.MaxRetries = 3;                                                     // default; total dispatch attempts
+        r.RetryDelay = attempt => TimeSpan.FromSeconds(Math.Pow(2, attempt)); // exponential backoff
+        r.UnrecoverableExceptionTypes.Add(typeof(NotSupportedException));
+        r.UnrecoverableExceptionPredicates.Add(ex => ex.Message.Contains("permanent"));
+    });
+});
+```
+
+- `MaxRetries` (default `3`) — maximum **total dispatch attempts**; a record fails permanently when `Retries + 1 >= MaxRetries`. *Moved here from `OutboxWorkerOptions` (breaking).*
+- `RetryDelay` — maps the 1-based failed-attempt ordinal to the delay before the next attempt. `null` (the default) or a non-positive delay means the record is eligible again at the next poll — the previous behavior.
+- `UnrecoverableExceptionTypes` — exception types (including derived types) that permanently fail a record on the first occurrence.
+- `UnrecoverableExceptionPredicates` — predicates that mark an exception unrecoverable.
+
+> **Polling granularity:** the effective retry moment is the first poll at or after `NextRetryAtUtc`, so delays shorter than `PollingIntervalMs` behave like immediate (next-poll) retries.
+
+> A throwing predicate is logged and treated as non-matching (recoverable); a throwing `RetryDelay` is logged and falls back to a next-poll retry.
 
 ### Serializer configuration
 
@@ -417,8 +447,10 @@ b.AddOutbox(ob =>
 
 `AddOutbox` registers an installer hosted service that prepares the store at startup:
 
-- **SQL Server:** creates the schema (if missing) and the table with a clustered primary key on `Id`, UTC check constraints, and the filtered index `IX_Outbox_Undispatched_ById`.
-- **MongoDB:** creates the partial index `ix_outbox_undispatched_by_id` on the outbox collection.
+- **SQL Server:** creates the schema (if missing) and the table with a clustered primary key on `Id`, UTC check constraints, the filtered ready index `IX_Outbox_Ready_ByDue`, and the failed-records index `IX_Outbox_Failed_ByFailedAt`.
+- **MongoDB:** creates the partial index `ix_outbox_ready_by_due` and the index `ix_outbox_failed_by_failedat` on the outbox collection.
+
+Existing tables/collections are **upgraded in place**: the installer idempotently adds the new columns (`LastError`, `LastErrorAtUtc`, `NextRetryAtUtc`) and indexes and drops the legacy undispatched index. On SQL Server this runs as two sequential batches (columns first, then constraints/indexes) so upgrades from older schemas compile cleanly.
 
 Dispatches issued before installation completes are gated, not failed — they wait until the installer signals completion. The background worker waits the same way before its first poll.
 
@@ -433,7 +465,35 @@ services.AddWhisper(b => b.AddOutbox(ob => ob.AddSqlServer(...)));
 services.Replace(ServiceDescriptor.Transient<IUuidProvider, MyUuidProvider>());
 ```
 
-> Outbox records are read and dispatched in `Id` order, and on SQL Server `Id` is the clustered primary key — a non-sequential custom provider changes dispatch ordering behavior and fragments the clustered index.
+> Outbox records are read and dispatched **due-first** — ordered by `NextRetryAtUtc` (nulls first), then `Id`; identical to plain `Id` order when no retry delay is configured. On SQL Server `Id` is the clustered primary key — a non-sequential custom provider changes dispatch ordering behavior and fragments the clustered index.
+
+### Management dashboard
+
+The **Whisper.Outbox.AspNetCore** package adds a host-mounted management dashboard for failed outbox records — an embedded, self-contained HTML page (vanilla JS, inline CSS, no external assets) plus a JSON API:
+
+```csharp
+using Microsoft.AspNetCore.Builder;
+
+app.MapWhisperOutbox();                        // mounts at /whisper/outbox
+// or: app.MapWhisperOutbox("/admin/outbox");  // custom pattern
+```
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /` | The dashboard page |
+| `GET /api/failed?page&pageSize` | Page failed records, `FailedAtUtc` descending (`pageSize` clamped to 1..200) |
+| `GET /api/records/{id}` | Full record incl. `Payload` and `LastError` (404 on miss) |
+| `POST /api/records/{id}/retry` | Re-queue a failed record (204 / 404) |
+| `POST /api/failed/retry-all` | Re-queue all failed records → `{ "retried": n }` |
+| `DELETE /api/records/{id}` | Delete a failed record (204 / 404) |
+
+Retrying resets `FailedAtUtc`, `Retries`, and `NextRetryAtUtc` but **keeps `LastError`** as an audit trail. Retry and delete only affect records that are actually failed, so the worker and the dashboard can never fight over a record.
+
+**Secure by default.** Every endpoint is mapped with `RequireAuthorization()`; opt out explicitly via `app.MapWhisperOutbox(configure: o => o.AllowAnonymous = true)`. A host without authentication/authorization configured gets an `InvalidOperationException` on the first request — an intended fail-safe, because the dashboard exposes event payloads. `MapWhisperOutbox` returns an `IEndpointConventionBuilder` for policies of your own, and throws at map time when no outbox storage backend (and therefore no `IOutboxManagementStore`) is registered.
+
+**Immune to host middleware.** The management store behind these endpoints is a **singleton with zero dependencies on the scoped session/connection providers**: on SQL Server it opens its own connection per operation from a connection string rebuilt with `Enlist=false` (an ambient `TransactionScope` from unit-of-work middleware cannot capture it); on MongoDB it always performs plain, sessionless operations. The dashboard therefore works correctly regardless of unit-of-work middleware, NServiceBus, or pipeline order. Hosts that want to skip their own unit-of-work middleware on these routes can detect the `WhisperOutboxEndpointMetadata` marker on the endpoint — an optimization only, never required for correctness.
+
+> The embedded page relies on inline `<script>`/`<style>`. If your host enforces a strict Content-Security-Policy, allow inline script and style for the dashboard route.
 
 ---
 
@@ -522,6 +582,9 @@ Whisper does not attempt to deduplicate; if you need deduplication, implement it
 
 **Who commits/rolls back the DB transaction for the outbox?**  
 You do — if there is one. The rule: **Whisper disposes only what it creates, and it creates only when no provider is registered.** Without a provider there is no host transaction: Whisper opens and disposes its own `SqlConnection` per operation (SQL Server) or performs plain writes (MongoDB), and outbox records commit independently. With a provider registered (`UseConnectionLeaseProvider` / `UseMongoSessionProvider`), the host owns the connection/transaction/session entirely — Whisper only uses them and never begins, commits, rolls back, or disposes anything. The worker dispatches after your unit of work completes (at-least-once).
+
+**Where do I see why an event failed?**  
+On the record itself. Every failed dispatch attempt persists the exception on the outbox record — `LastError` (`Exception.ToString()`, truncated) and `LastErrorAtUtc` — while the record is retrying and after it fails permanently. Mount the management dashboard from `Whisper.Outbox.AspNetCore` (`app.MapWhisperOutbox()`) to browse failed records, inspect the error and payload, and retry or delete them.
 
 **Does MediatR require a custom behavior from me?**  
 No. When you use `b.AddMediatR()`, Whisper adds its own behavior that dispatches raised events automatically.
