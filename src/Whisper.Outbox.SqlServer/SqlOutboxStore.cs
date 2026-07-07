@@ -4,7 +4,7 @@ using Whisper.Outbox.Abstractions;
 
 namespace Whisper.Outbox.SqlServer;
 
-internal sealed class SqlOutboxStore(SqlOutboxConfiguration sqlOutboxConfiguration, IConnectionLeaseProvider connectionLeaseProvider) : IOutboxStore
+internal sealed class SqlOutboxStore(SqlOutboxConfiguration sqlOutboxConfiguration, IConnectionLeaseProvider? connectionLeaseProvider) : IOutboxStore
 {
     public async Task Add(OutboxRecord outboxRecord, CancellationToken cancellationToken)
     {
@@ -29,15 +29,15 @@ INSERT INTO {QualifiedTableName()}
 (Id, EnqueuedAtUtc, AssemblyQualifiedType, Payload)
 VALUES (@Id, @EnqueuedAtUtc, @AssemblyQualifiedType, @Payload);";
 
-        await using var connectionLease = await connectionLeaseProvider.Provide(cancellationToken);
-        using var cmd = new SqlCommand(sql, connectionLease.Connection, connectionLease.Transaction);
+        await using var leaseScope = await AcquireLease(cancellationToken);
+        using var cmd = new SqlCommand(sql, leaseScope.Connection, leaseScope.Transaction);
 
         var pId = cmd.Parameters.Add("@Id", SqlDbType.UniqueIdentifier);
         var pEnqueued = cmd.Parameters.Add("@EnqueuedAtUtc", SqlDbType.DateTimeOffset);
         var pType = cmd.Parameters.Add("@AssemblyQualifiedType", SqlDbType.NVarChar, 2048);
         var pPayload = cmd.Parameters.Add("@Payload", SqlDbType.NVarChar, -1);
 
-        cmd.Prepare();
+        await cmd.PrepareAsync(cancellationToken);
 
         foreach (var r in outboxRecords)
         {
@@ -59,8 +59,8 @@ FROM {QualifiedTableName()} WITH (READCOMMITTEDLOCK)
 WHERE DispatchedAtUtc IS NULL AND FailedAtUtc IS NULL
 ORDER BY Id ASC;";
 
-        await using var connectionLease = await connectionLeaseProvider.Provide(cancellationToken);
-        using var cmd = new SqlCommand(sql, connectionLease.Connection, connectionLease.Transaction);
+        await using var leaseScope = await AcquireLease(cancellationToken);
+        using var cmd = new SqlCommand(sql, leaseScope.Connection, leaseScope.Transaction);
         cmd.Parameters.Add(new SqlParameter("@take", SqlDbType.Int) { Value = batchSize });
 
         var list = new List<OutboxRecord>(batchSize);
@@ -115,10 +115,38 @@ WHERE Id = @id;";
 
     private async Task ExecuteAsync(string sql, Action<SqlCommand> addParameters, CancellationToken cancellationToken)
     {
-        await using var connectionLease = await connectionLeaseProvider.Provide(cancellationToken);
-        using var cmd = new SqlCommand(sql, connectionLease.Connection, connectionLease.Transaction);
+        await using var leaseScope = await AcquireLease(cancellationToken);
+        using var cmd = new SqlCommand(sql, leaseScope.Connection, leaseScope.Transaction);
         addParameters(cmd);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async ValueTask<LeaseScope> AcquireLease(CancellationToken cancellationToken)
+    {
+        if (connectionLeaseProvider is not null)
+            return new LeaseScope(await connectionLeaseProvider.Provide(cancellationToken), OwnsConnection: false);
+
+        var connection = new SqlConnection(sqlOutboxConfiguration.ConnectionString);
+        try
+        {
+            await connection.OpenAsync(cancellationToken);
+            return new LeaseScope(new ConnectionLease(connection), OwnsConnection: true);
+        }
+        catch
+        {
+            await connection.DisposeAsync();
+            throw;
+        }
+    }
+
+    private readonly record struct LeaseScope(ConnectionLease Lease, bool OwnsConnection) : IAsyncDisposable
+    {
+        public SqlConnection Connection => Lease.Connection;
+
+        public SqlTransaction? Transaction => Lease.Transaction;
+
+        public ValueTask DisposeAsync()
+            => OwnsConnection ? Lease.Connection.DisposeAsync() : ValueTask.CompletedTask;
     }
 
     private string QualifiedTableName()

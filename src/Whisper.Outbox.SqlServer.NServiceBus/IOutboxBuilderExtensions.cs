@@ -1,6 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection.Extensions;
 using Whisper.Outbox;
-using Whisper.Outbox.SqlServer;
 using Whisper.Outbox.SqlServer.NServiceBus;
 
 namespace Microsoft.Extensions.DependencyInjection;
@@ -8,9 +6,6 @@ public static class IOutboxBuilderExtensions
 {
     public static IOutboxBuilder UseNServiceBusStorageSession(this IOutboxBuilder outboxBuilder)
     {
-        outboxBuilder.Services
-            .Replace(ServiceDescriptor.Scoped<IConnectionLeaseProvider, SqlStorageSessionConnectionLeaseProvider>())
-            ;
-        return outboxBuilder;
+        return outboxBuilder.UseConnectionLeaseProvider<SqlStorageSessionConnectionLeaseProvider>();
     }
 }
