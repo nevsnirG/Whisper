@@ -154,7 +154,7 @@ Whisper provides an **outbox** for reliable, asynchronous dispatch:
 - **Provider registered:** the host owns the connection/transaction/session entirely — Whisper only uses what the provider yields and never opens, begins, commits, rolls back, or disposes it.
 
 > The background worker always reads and dispatches **after** the unit of work completes — deliberately outside it.  
-> That is at-least-once publishing: the point of an outbox.
+> That is at-least-once publishing.
 
 ### MongoDB outbox
 
