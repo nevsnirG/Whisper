@@ -3,12 +3,13 @@ using Whisper.Outbox.Abstractions;
 
 namespace Whisper.Outbox.MongoDb;
 
-internal sealed class MongoDbOutboxStore(IMongoCollection<OutboxRecord> outboxCollection, IMongoSessionProvider mongoSessionProvider) : IOutboxStore
+internal sealed class MongoDbOutboxStore(IMongoCollection<OutboxRecord> outboxCollection, IMongoSessionProvider? mongoSessionProvider) : IOutboxStore
 {
     public Task Add(OutboxRecord outboxRecord, CancellationToken cancellationToken)
     {
-        if (mongoSessionProvider.IsInTransaction)
-            return outboxCollection.InsertOneAsync(mongoSessionProvider.Session, outboxRecord, new InsertOneOptions(), cancellationToken);
+        var session = mongoSessionProvider?.Session;
+        if (session is not null)
+            return outboxCollection.InsertOneAsync(session, outboxRecord, new InsertOneOptions(), cancellationToken);
         else
             return outboxCollection.InsertOneAsync(outboxRecord, new InsertOneOptions(), cancellationToken);
     }
@@ -16,8 +17,9 @@ internal sealed class MongoDbOutboxStore(IMongoCollection<OutboxRecord> outboxCo
     public Task Add(OutboxRecord[] outboxRecords, CancellationToken cancellationToken)
     {
         var options = new InsertManyOptions { IsOrdered = false };
-        if (mongoSessionProvider.IsInTransaction)
-            return outboxCollection.InsertManyAsync(mongoSessionProvider.Session, outboxRecords, options, cancellationToken);
+        var session = mongoSessionProvider?.Session;
+        if (session is not null)
+            return outboxCollection.InsertManyAsync(session, outboxRecords, options, cancellationToken);
         else
             return outboxCollection.InsertManyAsync(outboxRecords, options, cancellationToken);
     }
@@ -57,8 +59,9 @@ internal sealed class MongoDbOutboxStore(IMongoCollection<OutboxRecord> outboxCo
     {
         var filter = Builders<OutboxRecord>.Filter.Eq(or => or.Id, id);
 
-        if (mongoSessionProvider.IsInTransaction)
-            return outboxCollection.UpdateOneAsync(mongoSessionProvider.Session, filter, update, null, cancellationToken);
+        var session = mongoSessionProvider?.Session;
+        if (session is not null)
+            return outboxCollection.UpdateOneAsync(session, filter, update, null, cancellationToken);
         else
             return outboxCollection.UpdateOneAsync(filter, update, null, cancellationToken);
     }

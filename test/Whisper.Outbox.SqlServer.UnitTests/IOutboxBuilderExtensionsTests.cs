@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using NServiceBus.Persistence.Sql;
 using Whisper.Abstractions;
 using Whisper.Outbox;
 using Whisper.Outbox.Abstractions;
@@ -17,44 +18,167 @@ public class IOutboxBuilderExtensionsTests
     {
         var services = BuildServices(o => o.AddSqlServer(Configuration));
 
-        services.Should().Contain(s => s.ServiceType == typeof(IOutboxStore) && s.ImplementationType == typeof(SqlOutboxStore));
+        services.Should().Contain(s => s.ServiceType == typeof(IOutboxStore) && s.Lifetime == ServiceLifetime.Scoped);
         services.Should().Contain(s => s.ServiceType == typeof(IInstallOutbox) && s.ImplementationType == typeof(SqlOutboxInstaller));
         services.Should().Contain(s => s.ServiceType == typeof(IUuidProvider) && s.ImplementationType == typeof(SqlServerUuidProvider));
-        services.Should().Contain(s => s.ServiceType == typeof(IConnectionLeaseProvider) && s.ImplementationType == typeof(SqlOutboxConfigurationConnectionLeaseProvider));
         services.Should().Contain(s => s.ServiceType == typeof(SqlOutboxConfiguration));
     }
 
     [Fact]
-    public void AddSqlServer_WithoutNServiceBusStorageSession_RegistersSingleTransientSqlOutboxConfigurationConnectionLeaseProvider()
+    public void AddSqlServer_ResolvesSqlOutboxStore()
     {
-        var services = BuildServices(o => o.AddSqlServer(Configuration));
+        using var serviceProvider = BuildServiceProvider(o => o.AddSqlServer(Configuration));
+        using var scope = serviceProvider.CreateScope();
 
-        var descriptor = services.Should().ContainSingle(s => s.ServiceType == typeof(IConnectionLeaseProvider)).Subject;
-        descriptor.ImplementationType.Should().Be(typeof(SqlOutboxConfigurationConnectionLeaseProvider));
-        descriptor.Lifetime.Should().Be(ServiceLifetime.Transient);
+        var store = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
+
+        store.Should().BeOfType<SqlOutboxStore>();
+    }
+
+    [Fact]
+    public void AddSqlServer_Alone_DoesNotRegisterConnectionLeaseProvider()
+    {
+        using var serviceProvider = BuildServiceProvider(o => o.AddSqlServer(Configuration));
+        using var scope = serviceProvider.CreateScope();
+
+        scope.ServiceProvider.GetService<IConnectionLeaseProvider>().Should().BeNull();
+    }
+
+    [Fact]
+    public void UseConnectionLeaseProvider_ResolvesInterfaceToRegisteredProvider()
+    {
+        using var serviceProvider = BuildServiceProvider(o => o.AddSqlServer(Configuration).UseConnectionLeaseProvider<FirstLeaseProvider>());
+        using var scope = serviceProvider.CreateScope();
+
+        var leaseProvider = scope.ServiceProvider.GetRequiredService<IConnectionLeaseProvider>();
+
+        leaseProvider.Should().BeOfType<FirstLeaseProvider>();
+    }
+
+    [Fact]
+    public void UseConnectionLeaseProvider_InterfaceAndConcreteTypeResolveToSameInstanceWithinScope()
+    {
+        using var serviceProvider = BuildServiceProvider(o => o.AddSqlServer(Configuration).UseConnectionLeaseProvider<FirstLeaseProvider>());
+        using var scope = serviceProvider.CreateScope();
+
+        var viaInterface = scope.ServiceProvider.GetRequiredService<IConnectionLeaseProvider>();
+        var viaConcreteType = scope.ServiceProvider.GetRequiredService<FirstLeaseProvider>();
+
+        viaInterface.Should().BeSameAs(viaConcreteType);
+    }
+
+    [Fact]
+    public void UseConnectionLeaseProvider_ResolvesDifferentInstancesAcrossScopes()
+    {
+        using var serviceProvider = BuildServiceProvider(o => o.AddSqlServer(Configuration).UseConnectionLeaseProvider<FirstLeaseProvider>());
+        using var firstScope = serviceProvider.CreateScope();
+        using var secondScope = serviceProvider.CreateScope();
+
+        var firstInstance = firstScope.ServiceProvider.GetRequiredService<IConnectionLeaseProvider>();
+        var secondInstance = secondScope.ServiceProvider.GetRequiredService<IConnectionLeaseProvider>();
+
+        firstInstance.Should().NotBeSameAs(secondInstance);
+    }
+
+    [Fact]
+    public void UseConnectionLeaseProvider_FactoryOverload_ResolvesInstanceCreatedByFactory()
+    {
+        var created = new List<FirstLeaseProvider>();
+        using var serviceProvider = BuildServiceProvider(o => o.AddSqlServer(Configuration).UseConnectionLeaseProvider(_ =>
+        {
+            var instance = new FirstLeaseProvider();
+            created.Add(instance);
+            return instance;
+        }));
+        using var scope = serviceProvider.CreateScope();
+
+        var leaseProvider = scope.ServiceProvider.GetRequiredService<IConnectionLeaseProvider>();
+
+        created.Should().ContainSingle().Which.Should().BeSameAs(leaseProvider);
+    }
+
+    [Fact]
+    public void UseConnectionLeaseProvider_CalledTwiceWithDifferentProviders_LastProviderWinsWithSingleRegistration()
+    {
+        using var serviceProvider = BuildServiceProvider(o => o.AddSqlServer(Configuration)
+            .UseConnectionLeaseProvider<FirstLeaseProvider>()
+            .UseConnectionLeaseProvider<SecondLeaseProvider>());
+        using var scope = serviceProvider.CreateScope();
+
+        var leaseProviders = scope.ServiceProvider.GetServices<IConnectionLeaseProvider>();
+
+        leaseProviders.Should().ContainSingle().Which.Should().BeOfType<SecondLeaseProvider>();
+    }
+
+    [Fact]
+    public void UseConnectionLeaseProvider_GenericThenFactoryOverload_FactoryRegistrationWins()
+    {
+        using var serviceProvider = BuildServiceProvider(o => o.AddSqlServer(Configuration)
+            .UseConnectionLeaseProvider<FirstLeaseProvider>()
+            .UseConnectionLeaseProvider(_ => new SecondLeaseProvider()));
+        using var scope = serviceProvider.CreateScope();
+
+        var leaseProviders = scope.ServiceProvider.GetServices<IConnectionLeaseProvider>();
+
+        leaseProviders.Should().ContainSingle().Which.Should().BeOfType<SecondLeaseProvider>();
+    }
+
+    [Fact]
+    public void UseConnectionLeaseProvider_FactoryThenGenericOverload_GenericRegistrationWins()
+    {
+        var created = new List<FirstLeaseProvider>();
+        using var serviceProvider = BuildServiceProvider(o => o.AddSqlServer(Configuration)
+            .UseConnectionLeaseProvider(_ =>
+            {
+                var instance = new FirstLeaseProvider();
+                created.Add(instance);
+                return instance;
+            })
+            .UseConnectionLeaseProvider<FirstLeaseProvider>());
+        using var scope = serviceProvider.CreateScope();
+
+        var leaseProvider = scope.ServiceProvider.GetRequiredService<IConnectionLeaseProvider>();
+
+        leaseProvider.Should().BeOfType<FirstLeaseProvider>();
+        created.Should().BeEmpty("the generic overload replaces the factory registration with a container-constructed one");
     }
 
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public void UseNServiceBusStorageSession_InAnyOrderWithAddSqlServer_RegistersSingleScopedSqlStorageSessionConnectionLeaseProvider(bool addSqlServerFirst)
+    public void UseConnectionLeaseProvider_InAnyOrderWithAddSqlServer_RegisteredProviderWins(bool addSqlServerFirst)
     {
-        var services = BuildServices(o =>
+        using var serviceProvider = BuildServiceProvider(o =>
         {
             if (addSqlServerFirst)
-            {
-                o.AddSqlServer(Configuration).UseNServiceBusStorageSession();
-            }
+                o.AddSqlServer(Configuration).UseConnectionLeaseProvider<FirstLeaseProvider>();
             else
-            {
-                o.UseNServiceBusStorageSession().AddSqlServer(Configuration);
-            }
+                o.UseConnectionLeaseProvider<FirstLeaseProvider>().AddSqlServer(Configuration);
         });
+        using var scope = serviceProvider.CreateScope();
 
-        var descriptor = services.Should().ContainSingle(s => s.ServiceType == typeof(IConnectionLeaseProvider)).Subject;
-        descriptor.ImplementationType.Should().NotBeNull();
-        descriptor.ImplementationType!.Name.Should().Be("SqlStorageSessionConnectionLeaseProvider");
-        descriptor.Lifetime.Should().Be(ServiceLifetime.Scoped);
+        var leaseProvider = scope.ServiceProvider.GetRequiredService<IConnectionLeaseProvider>();
+
+        leaseProvider.Should().BeOfType<FirstLeaseProvider>();
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void UseNServiceBusStorageSession_InAnyOrderWithAddSqlServer_ResolvesSqlStorageSessionConnectionLeaseProvider(bool addSqlServerFirst)
+    {
+        using var serviceProvider = BuildServiceProvider(o =>
+        {
+            if (addSqlServerFirst)
+                o.AddSqlServer(Configuration).UseNServiceBusStorageSession();
+            else
+                o.UseNServiceBusStorageSession().AddSqlServer(Configuration);
+        }, s => s.AddScoped(_ => Substitute.For<ISqlStorageSession>()));
+        using var scope = serviceProvider.CreateScope();
+
+        var leaseProviders = scope.ServiceProvider.GetServices<IConnectionLeaseProvider>();
+
+        leaseProviders.Should().ContainSingle().Which.GetType().Name.Should().Be("SqlStorageSessionConnectionLeaseProvider");
     }
 
     [Fact]
@@ -100,11 +224,30 @@ public class IOutboxBuilderExtensionsTests
         descriptor.Lifetime.Should().Be(ServiceLifetime.Transient);
     }
 
-    private static IServiceCollection BuildServices(Action<IOutboxBuilder> configure)
+    private static IServiceCollection BuildServices(Action<IOutboxBuilder> configure, Action<IServiceCollection>? postConfigure = null)
     {
         var services = new ServiceCollection() as IServiceCollection;
         services.AddOptions();
         services.AddWhisper(b => b.AddOutbox(configure));
+        postConfigure?.Invoke(services);
         return services;
+    }
+
+    private static ServiceProvider BuildServiceProvider(Action<IOutboxBuilder> configure, Action<IServiceCollection>? postConfigure = null)
+    {
+        return BuildServices(configure, postConfigure)
+            .BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+    }
+
+    private sealed class FirstLeaseProvider : IConnectionLeaseProvider
+    {
+        public ValueTask<ConnectionLease> Provide(CancellationToken cancellationToken)
+            => throw new NotSupportedException("Never invoked by resolution-shape tests.");
+    }
+
+    private sealed class SecondLeaseProvider : IConnectionLeaseProvider
+    {
+        public ValueTask<ConnectionLease> Provide(CancellationToken cancellationToken)
+            => throw new NotSupportedException("Never invoked by resolution-shape tests.");
     }
 }

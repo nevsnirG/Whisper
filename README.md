@@ -148,10 +148,10 @@ Whisper provides an **outbox** for reliable, asynchronous dispatch:
 - Supports **MongoDB** and **SQL Server**.
 - Optionally participates in your unit of work via very small provider abstractions.
 
-**Unit-of-work participation is opt-in** — not every project uses a unit of work, and that is fine:
+**Unit-of-work participation is opt-in**, enabled explicitly via builder methods — `ob.UseConnectionLeaseProvider<T>()` (SQL Server) and `ob.UseMongoSessionProvider<T>()` (MongoDB). Ownership follows origin: **Whisper disposes only what it creates, and it creates only when no provider is registered.**
 
-- **No provider registered:** Whisper manages its own database access. For SQL Server it opens and disposes its own `SqlConnection` per operation; for MongoDB it uses plain writes with no `IClientSessionHandle` (and therefore no replica set requirement). Outbox records commit independently of any host transaction.
-- **Provider registered:** the dispatch-side `Add` enlists in the host’s session/transaction, and the **host owns commit/rollback**. Whisper never begins, commits, or rolls back a transaction.
+- **No provider registered:** Whisper manages its own database access. For SQL Server it opens and disposes its own `SqlConnection` per operation, with no transaction; for MongoDB it uses plain writes with no `IClientSessionHandle` (and therefore no replica set requirement). Outbox records commit independently of any host transaction.
+- **Provider registered:** the host owns the connection/transaction/session entirely — Whisper only uses what the provider yields and never opens, begins, commits, rolls back, or disposes it.
 
 > The background worker always reads and dispatches **after** the unit of work completes — deliberately outside it.  
 > That is at-least-once publishing: the point of an outbox.
@@ -194,15 +194,45 @@ public interface IMongoSessionProvider
 ```
 
 > There are **no** `Commit` / `Abort` methods on this interface.  
-> When `Session` is `null`, Whisper writes without a session; otherwise it passes the session to its inserts and the **host** commits or aborts it.
+> When `Session` is `null`, Whisper writes without a session; otherwise it passes the session to its writes and the **host** owns it — Whisper never starts, commits, aborts, or disposes it.
 
 **Default — no session**
 
-`AddMongoDb` alone registers an empty provider (`Session` is always `null`). Outbox records are written as plain inserts — no `IClientSessionHandle`, no replica set requirement — and commit independently of any host transaction.
+`AddMongoDb` alone registers **no** provider. Outbox records are written as plain inserts — no `IClientSessionHandle`, no replica set requirement — and commit independently of any host transaction.
 
 ```csharp
 b.AddOutbox(ob => ob.AddMongoDb(new() { /* ... */ }));
 ```
+
+**Host-managed session**
+
+For the common “my unit of work starts the session” case, Whisper ships a built-in provider pair. Register it with `UseHostManagedMongoSession()`, then hand your session over via `IMongoSessionProviderInitializer` after starting it:
+
+```csharp
+b.AddOutbox(ob =>
+{
+    ob.AddMongoDb(new() { /* ... */ });
+    ob.UseHostManagedMongoSession();
+});
+```
+
+```csharp
+using Microsoft.Extensions.DependencyInjection;
+using MongoDB.Driver;
+using Whisper.Outbox.MongoDb;
+
+// Inside your unit of work, after starting the session:
+using var session = await mongoClient.StartSessionAsync(cancellationToken: ct);
+session.StartTransaction();
+
+serviceProvider.GetRequiredService<IMongoSessionProviderInitializer>().Initialize(session);
+
+// ... domain operations — the outbox `Add` now joins `session`
+
+await session.CommitTransactionAsync(ct); // the host owns commit/abort
+```
+
+> A scope that never calls `Initialize` gets plain (session-less) writes.
 
 **NServiceBus storage session**
 
@@ -229,8 +259,14 @@ public sealed class UnitOfWorkMongoSessionProvider(MyUnitOfWork unitOfWork) : IM
 ```
 
 ```csharp
-services.AddScoped<IMongoSessionProvider, UnitOfWorkMongoSessionProvider>();
+b.AddOutbox(ob =>
+{
+    ob.AddMongoDb(new() { /* ... */ });
+    ob.UseMongoSessionProvider<UnitOfWorkMongoSessionProvider>();
+});
 ```
+
+> `UseMongoSessionProvider` also has an overload taking a `Func<IServiceProvider, TProvider>` factory. Registering `IMongoSessionProvider` directly in DI is honored too, but the builder method is the intended path.
 
 ### SQL Server outbox
 
@@ -263,23 +299,18 @@ using Microsoft.Data.SqlClient;
 
 public interface IConnectionLeaseProvider
 {
-    ValueTask<IConnectionLease> Provide(CancellationToken cancellationToken);
+    ValueTask<ConnectionLease> Provide(CancellationToken cancellationToken);
 }
 
-public interface IConnectionLease : IAsyncDisposable
-{
-    SqlConnection Connection { get; }
-
-    SqlTransaction? Transaction { get; }
-}
+public sealed record ConnectionLease(SqlConnection Connection, SqlTransaction? Transaction = null);
 ```
 
-> **Lease contract:** per store operation, Whisper awaits `Provide()` and disposes the returned lease exactly once.  
-> A lease’s `DisposeAsync` must release **only** resources the provider itself created — the default provider disposes the `SqlConnection` it opened; the NServiceBus lease is a deliberate no-op because NServiceBus owns that connection and transaction.
+> **Ownership by origin:** Whisper disposes only what it creates, and it creates only when no provider is registered.  
+> `ConnectionLease` is pure data — everything a provider yields belongs to the host; Whisper only uses the connection and transaction and never opens, commits, rolls back, or disposes them.
 
 **Default — own connection per operation**
 
-`AddSqlServer` alone registers a default provider that opens a fresh `SqlConnection` per operation (`Transaction` is `null`) and disposes it when the lease is disposed. Outbox records commit independently of any host transaction.
+`AddSqlServer` alone registers **no** provider. Without one, Whisper opens a fresh `SqlConnection` per operation, uses no transaction, and disposes the connection itself. Outbox records commit independently of any host transaction.
 
 ```csharp
 b.AddOutbox(ob => ob.AddSqlServer(new() { /* ... */ }));
@@ -297,36 +328,33 @@ b.AddOutbox(ob =>
 
 **Custom unit of work**
 
-Return the connection and transaction your unit of work already owns, with a no-op `DisposeAsync`:
+Return the connection and transaction your unit of work already owns; the unit of work keeps ownership of commit/rollback and disposal:
 
 ```csharp
-using Microsoft.Data.SqlClient;
 using Whisper.Outbox.SqlServer;
 
 public sealed class UnitOfWorkConnectionLeaseProvider(MyUnitOfWork unitOfWork) : IConnectionLeaseProvider
 {
-    public ValueTask<IConnectionLease> Provide(CancellationToken cancellationToken)
-        => ValueTask.FromResult<IConnectionLease>(new Lease(unitOfWork.Connection, unitOfWork.Transaction));
-
-    private sealed class Lease(SqlConnection connection, SqlTransaction transaction) : IConnectionLease
-    {
-        public SqlConnection Connection => connection;
-
-        public SqlTransaction? Transaction => transaction;
-
-        // No-op: the unit of work owns the connection and transaction.
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
-    }
+    public ValueTask<ConnectionLease> Provide(CancellationToken cancellationToken)
+        => ValueTask.FromResult(new ConnectionLease(unitOfWork.Connection, unitOfWork.Transaction));
 }
 ```
 
 ```csharp
-services.AddScoped<IConnectionLeaseProvider, UnitOfWorkConnectionLeaseProvider>();
+b.AddOutbox(ob =>
+{
+    ob.AddSqlServer(new() { /* ... */ });
+    ob.UseConnectionLeaseProvider<UnitOfWorkConnectionLeaseProvider>();
+});
 ```
+
+> **Warning — every scope, no fallback:** a registered `IConnectionLeaseProvider` is consulted for **every** store operation, including the background worker’s own polling scopes, where no unit of work is active. There is deliberately no fallback. Your provider must return a usable, open connection in every scope — when no unit of work is active, open one yourself (e.g., from configuration); otherwise the worker can never read or dispatch outbox records. This applies to the SQL provider only: the Mongo equivalent handles it naturally (`Session` is `null` → plain writes).
+
+> `UseConnectionLeaseProvider` also has an overload taking a `Func<IServiceProvider, TProvider>` factory. Registering `IConnectionLeaseProvider` directly in DI is honored too, but the builder method is the intended path.
 
 ### NServiceBus adapters
 
-Re-use the NServiceBus storage session as the transaction context. `UseNServiceBusStorageSession()` may be called before or after `AddMongoDb` / `AddSqlServer` — registration is order-independent.
+Re-use the NServiceBus storage session as the transaction context. `UseNServiceBusStorageSession()` may be called before or after `AddMongoDb` / `AddSqlServer` — registration is order-independent. Internally it routes through `UseMongoSessionProvider` / `UseConnectionLeaseProvider`, so the same ownership rule applies: NServiceBus owns the session/connection; Whisper only uses it.
 
 **MongoDB**
 ```csharp
@@ -432,7 +460,7 @@ Yes. Whisper uses `AsyncLocal<T>` to keep events bound to the current async exec
 Whisper does not attempt to deduplicate; if you need deduplication, implement it at your dispatcher/consumer side.
 
 **Who commits/rolls back the DB transaction for the outbox?**  
-You do — if there is one. Without a registered provider there is no host transaction: Whisper opens its own `SqlConnection` per operation (SQL Server) or performs plain writes (MongoDB), and outbox records commit independently. With a provider registered, the dispatch-side `Add` enlists in your session/transaction and the host owns commit/rollback — Whisper never begins, commits, or rolls back a transaction. The worker dispatches after your unit of work completes (at-least-once).
+You do — if there is one. The rule: **Whisper disposes only what it creates, and it creates only when no provider is registered.** Without a provider there is no host transaction: Whisper opens and disposes its own `SqlConnection` per operation (SQL Server) or performs plain writes (MongoDB), and outbox records commit independently. With a provider registered (`UseConnectionLeaseProvider` / `UseMongoSessionProvider`), the host owns the connection/transaction/session entirely — Whisper only uses them and never begins, commits, rolls back, or disposes anything. The worker dispatches after your unit of work completes (at-least-once).
 
 **Does MediatR require a custom behavior from me?**  
 No. When you use `b.AddMediatR()`, Whisper adds its own behavior that dispatches raised events automatically.
