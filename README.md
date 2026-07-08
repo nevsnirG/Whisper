@@ -154,8 +154,7 @@ Whisper provides an **outbox** for reliable, asynchronous dispatch:
 - **No provider registered:** Whisper manages its own database access. For SQL Server it opens and disposes its own `SqlConnection` per operation, with no transaction; for MongoDB it uses plain writes with no `IClientSessionHandle` (and therefore no replica set requirement). Outbox records commit independently of any host transaction.
 - **Provider registered:** the host owns the connection/transaction/session entirely — Whisper only uses what the provider yields and never opens, begins, commits, rolls back, or disposes it.
 
-> The background worker always reads and dispatches **after** the unit of work completes — deliberately outside it.  
-> That is at-least-once publishing.
+> The background worker always reads and dispatches **after** the unit of work completes.
 
 ### MongoDB outbox
 
@@ -391,8 +390,6 @@ b.AddOutbox(ob =>
 });
 ```
 
-> **Breaking:** `MaxRetries` has moved from `OutboxWorkerOptions` to `OutboxRecoverabilityOptions` — see [Recoverability](#recoverability) below.
-
 The worker reads records that are **due**: not dispatched, not failed, and `NextRetryAtUtc` null or at/before now — ordered by `NextRetryAtUtc` ascending (nulls first), then `Id` ascending. With no retry delay configured this is identical to plain `Id` order. Per record in a batch:
 
 - **Success:** the record is marked `DispatchedAtUtc`.
@@ -469,7 +466,7 @@ services.Replace(ServiceDescriptor.Transient<IUuidProvider, MyUuidProvider>());
 
 ### Management dashboard
 
-The **Whisper.Outbox.AspNetCore** package adds a host-mounted management dashboard for failed outbox records — an embedded, self-contained HTML page (vanilla JS, inline CSS, no external assets) plus a JSON API:
+The **Whisper.Outbox.AspNetCore** package adds a host-mounted management dashboard for failed outbox records:
 
 ```csharp
 using Microsoft.AspNetCore.Builder;
@@ -490,8 +487,6 @@ app.MapWhisperOutbox();                        // mounts at /whisper/outbox
 Retrying resets `FailedAtUtc`, `Retries`, and `NextRetryAtUtc` but **keeps `LastError`** as an audit trail. Retry and delete only affect records that are actually failed, so the worker and the dashboard can never fight over a record.
 
 **Secure by default.** Every endpoint is mapped with `RequireAuthorization()`; opt out explicitly via `app.MapWhisperOutbox(configure: o => o.AllowAnonymous = true)`. A host without authentication/authorization configured gets an `InvalidOperationException` on the first request — an intended fail-safe, because the dashboard exposes event payloads. `MapWhisperOutbox` returns an `IEndpointConventionBuilder` for policies of your own, and throws at map time when no outbox storage backend (and therefore no `IOutboxManagementStore`) is registered.
-
-**Immune to host middleware.** The management store behind these endpoints is a **singleton with zero dependencies on the scoped session/connection providers**: on SQL Server it opens its own connection per operation from a connection string rebuilt with `Enlist=false` (an ambient `TransactionScope` from unit-of-work middleware cannot capture it); on MongoDB it always performs plain, sessionless operations. The dashboard therefore works correctly regardless of unit-of-work middleware, NServiceBus, or pipeline order. Hosts that want to skip their own unit-of-work middleware on these routes can detect the `WhisperOutboxEndpointMetadata` marker on the endpoint — an optimization only, never required for correctness.
 
 > The embedded page relies on inline `<script>`/`<style>`. If your host enforces a strict Content-Security-Policy, allow inline script and style for the dashboard route.
 
