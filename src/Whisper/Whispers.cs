@@ -25,8 +25,13 @@ public static class Whispers
 
     public static IDomainEvent[] GetAndClearEvents()
     {
-        var events = _domainEvents.Value?.ToArray() ?? [];
-        _domainEvents.Value = [];
-        return events;
+        var events = _domainEvents.Value;
+
+        if (events is null || events.Count == 0)
+            return [];
+
+        var drained = events.ToArray();
+        events.Clear();
+        return drained;
     }
 }
