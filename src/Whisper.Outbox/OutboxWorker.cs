@@ -1,8 +1,8 @@
-using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using System.Diagnostics.CodeAnalysis;
 using Whisper.Abstractions;
 using Whisper.Outbox.Abstractions;
 
@@ -44,14 +44,21 @@ internal sealed class OutboxWorker(IDomainEventSerializer domainEventSerializer,
                 logger.LogError(ex, "An error occurred while processing the outbox batch.");
             }
 
-#pragma warning disable CA2016
-            if (_outboxWorkerOptions.UsePollingTimeProvider)
-                await Task.Delay(TimeSpan.FromMilliseconds(_outboxWorkerOptions.PollingIntervalMs), timeProvider, stoppingToken)
-                    .ContinueWith(_ => { });
-            else
-                await Task.Delay(_outboxWorkerOptions.PollingIntervalMs, stoppingToken)
-                    .ContinueWith(_ => { });
-#pragma warning restore CA2016
+            await Delay(stoppingToken);
+        }
+    }
+
+    private Task Delay(CancellationToken stoppingToken)
+    {
+        if (_outboxWorkerOptions.UsePollingTimeProvider)
+        {
+            return Task.Delay(TimeSpan.FromMilliseconds(_outboxWorkerOptions.PollingIntervalMs), timeProvider, stoppingToken)
+                .ContinueWith(_ => { }, CancellationToken.None);
+        }
+        else
+        {
+            return Task.Delay(_outboxWorkerOptions.PollingIntervalMs, stoppingToken)
+                .ContinueWith(_ => { }, CancellationToken.None);
         }
     }
 
