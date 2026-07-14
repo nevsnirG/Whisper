@@ -45,8 +45,12 @@ internal sealed class OutboxWorker(IDomainEventSerializer domainEventSerializer,
             }
 
 #pragma warning disable CA2016
-            await Task.Delay(_outboxWorkerOptions.PollingIntervalMs, stoppingToken)
-                .ContinueWith(_ => { });
+            if (_outboxWorkerOptions.UsePollingTimeProvider)
+                await Task.Delay(TimeSpan.FromMilliseconds(_outboxWorkerOptions.PollingIntervalMs), timeProvider, stoppingToken)
+                    .ContinueWith(_ => { });
+            else
+                await Task.Delay(_outboxWorkerOptions.PollingIntervalMs, stoppingToken)
+                    .ContinueWith(_ => { });
 #pragma warning restore CA2016
         }
     }

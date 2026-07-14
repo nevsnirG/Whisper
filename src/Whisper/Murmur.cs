@@ -5,22 +5,40 @@ namespace Whisper;
 internal sealed class Murmur : IEnumerable<IDomainEvent>
 {
     private readonly List<IDomainEvent> _domainEvents = [];
-
-    public int Count => _domainEvents.Count;
+    private readonly object _gate = new();
 
     public void Add(IDomainEvent domainEvent)
     {
-        _domainEvents.Add(domainEvent);
+        lock (_gate)
+        {
+            _domainEvents.Add(domainEvent);
+        }
     }
 
-    public void Clear()
+    public IDomainEvent[] Snapshot()
     {
-        _domainEvents.Clear();
+        lock (_gate)
+        {
+            return [.. _domainEvents];
+        }
+    }
+
+    public IDomainEvent[] DrainAll()
+    {
+        lock (_gate)
+        {
+            if (_domainEvents.Count == 0)
+                return [];
+
+            var drained = _domainEvents.ToArray();
+            _domainEvents.Clear();
+            return drained;
+        }
     }
 
     public IEnumerator<IDomainEvent> GetEnumerator()
     {
-        return _domainEvents.GetEnumerator();
+        return ((IEnumerable<IDomainEvent>)Snapshot()).GetEnumerator();
     }
 
     IEnumerator IEnumerable.GetEnumerator()
