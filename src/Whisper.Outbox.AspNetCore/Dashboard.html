@@ -17,7 +17,9 @@
   button.primary:hover:not(:disabled) { background: #24528f; }
   button.danger { color: #a8262b; border-color: #cf9a9c; }
   button.danger:hover:not(:disabled) { background: #faf1f1; }
-  .actions { display: flex; gap: 8px; }
+  .actions { display: flex; align-items: center; gap: 8px; }
+  #autoRefreshLabel { display: flex; align-items: center; gap: 5px; font-size: 13px; color: #41546b; cursor: pointer; }
+  #autoRefreshLabel input { margin: 0; cursor: pointer; }
   #status { min-height: 20px; margin: 0 0 10px; font-size: 13px; color: #41546b; }
   #status.error { color: #a8262b; }
   table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #dde1e6; }
@@ -44,6 +46,7 @@
 <header>
   <h1>Whisper Outbox — failed records</h1>
   <div class="actions">
+    <label id="autoRefreshLabel"><input type="checkbox" id="autoRefreshBox"> Auto-refresh</label>
     <button id="refreshBtn">Refresh</button>
     <button id="retryAllBtn" class="primary">Retry all</button>
   </div>
@@ -83,20 +86,48 @@ const api = path => BASE + path;
 
 const PAGE_SIZE = 50;
 const COLUMN_COUNT = 7;
+const AUTO_REFRESH_MS = 10000;
+const AUTO_REFRESH_KEY = 'whisper.outbox.autoRefresh';
+const MAX_CLAMP_ATTEMPTS = 3;
 
 let page = 1;
 let totalCount = 0;
 let expandedId = null;
+let inFlight = 0;
+let loadSeq = 0;
+let lastSignature = null;
+let pendingRender = null;
+let statusOwner = null;
+let autoRefresh = readAutoRefresh();
 
 const rows = document.getElementById('rows');
 const status = document.getElementById('status');
 const pageInfo = document.getElementById('pageInfo');
 const prevBtn = document.getElementById('prevBtn');
 const nextBtn = document.getElementById('nextBtn');
+const autoRefreshBox = document.getElementById('autoRefreshBox');
 
-function setStatus(text, isError) {
+function readAutoRefresh() {
+  try {
+    return localStorage.getItem(AUTO_REFRESH_KEY) !== '0';
+  } catch {
+    // Storage access throws when it is disabled or in private mode; auto-refresh stays on, in memory only.
+    return true;
+  }
+}
+
+function writeAutoRefresh(enabled) {
+  try {
+    localStorage.setItem(AUTO_REFRESH_KEY, enabled ? '1' : '0');
+  } catch {
+    // See readAutoRefresh: the toggle keeps working for this page load, it just is not remembered.
+  }
+}
+
+function setStatus(text, isError, owner) {
   status.textContent = text || '';
   status.className = isError ? 'error' : '';
+  statusOwner = text ? owner : null;
 }
 
 function shortId(id) {
@@ -126,18 +157,95 @@ function prettyPayload(payload) {
   }
 }
 
-async function loadPage() {
+// Loads overlap: a slow refresh can land after a mutation and its follow-up load. Every load takes
+// the next sequence number and commits nothing once a newer load has been issued, so a superseded
+// response can never resurrect deleted records or throw the user back a page.
+async function loadPage(deferrable, requested = page) {
+  const seq = ++loadSeq;
+  inFlight++;
   try {
-    const response = await fetch(api(`api/failed?page=${page}&pageSize=${PAGE_SIZE}`));
-    if (!response.ok) throw new Error(`Loading failed records returned HTTP ${response.status}.`);
-    const data = await response.json();
-    page = data.page;
-    totalCount = data.totalCount;
-    renderRows(data.records);
-    renderPager();
+    let data = await fetchFailedPage(requested);
+    if (seq !== loadSeq) return;
+    for (let attempt = 0; attempt < MAX_CLAMP_ATTEMPTS && data.page > lastPageOf(data.totalCount); attempt++) {
+      requested = lastPageOf(data.totalCount);
+      data = await fetchFailedPage(requested);
+      if (seq !== loadSeq) return;
+    }
+    renderIfChanged(data, deferrable);
+    clearLoadError();
   } catch (error) {
-    setStatus(String(error), true);
+    if (seq === loadSeq) reportLoadError(error);
+  } finally {
+    inFlight--;
   }
+}
+
+async function fetchFailedPage(requestedPage) {
+  const response = await fetch(api(`api/failed?page=${requestedPage}&pageSize=${PAGE_SIZE}`));
+  if (!response.ok) throw new Error(`Loading failed records returned HTTP ${response.status}.`);
+  return response.json();
+}
+
+// An unchanged page touches no DOM at all: rebuilding identical rows is pure churn that would drop
+// hover states and text selections for nothing.
+// `page` and `totalCount` are committed here and nowhere else, so they always describe the rows the
+// user is looking at, never a parked render they cannot see: Previous/Next stay relative to the
+// visible page. Both are part of the signature, so the early return leaves them already correct.
+function renderIfChanged(data, deferrable) {
+  const signature = signatureOf(data);
+  if (signature === lastSignature) {
+    pendingRender = null;
+    return;
+  }
+  if (deferrable && shouldDeferRender()) {
+    pendingRender = { data, seq: loadSeq };
+    return;
+  }
+  pendingRender = null;
+  lastSignature = signature;
+  page = data.page;
+  totalCount = data.totalCount;
+  renderRows(data.records);
+  renderPager();
+}
+
+// Failed records are ordered newest first, so a new failure — or a record leaving the failed set after
+// a retry or delete — shifts the rows under the cursor. A render firing while the pointer rests on a
+// Retry or Delete button would slide a different record under it, and Retry has no confirmation;
+// rebuilding the table under an open detail row would rip it away mid-read. Such a render is parked and
+// flushed as soon as the pointer moves elsewhere in the table, leaves the table, or the detail row is
+// closed. This is why a command's own follow-up load is deferrable too: the pointer is by construction
+// still on the button that was just clicked.
+function shouldDeferRender() {
+  return expandedId !== null
+    || rows.querySelector('td.row-actions button:hover') !== null;
+}
+
+function flushPendingRender() {
+  if (pendingRender === null) return;
+  if (pendingRender.seq !== loadSeq) {
+    pendingRender = null;
+    return;
+  }
+  if (shouldDeferRender()) return;
+  renderIfChanged(pendingRender.data, false);
+}
+
+function signatureOf(data) {
+  const records = data.records.map(record => `${record.id}:${record.retries}:${record.failedAtUtc}`).join(',');
+  return `${data.totalCount}|${data.page}|${records}`;
+}
+
+function reportLoadError(error) {
+  setStatus(String(error), true, 'load-error');
+}
+
+function clearLoadError() {
+  if (statusOwner === 'load-error') setStatus('', false, null);
+}
+
+function lastPageOf(count) {
+  return Math.max(1, Math.ceil(count / PAGE_SIZE));
 }
 
 function renderRows(records) {
@@ -204,19 +312,29 @@ function actionButton(label, className, onClick) {
 async function toggleDetail(row, id) {
   const wasExpanded = expandedId === id;
   collapseDetail();
-  if (wasExpanded) return;
+  if (wasExpanded) {
+    flushPendingRender();
+    return;
+  }
 
   const cell = expandDetail(row, id);
+  const stillExpanded = () => expandedId === id && cell.isConnected;
+  inFlight++;
   try {
     const response = await fetch(api('api/records/' + id));
+    if (!stillExpanded()) return;
     if (response.status === 404) {
       cell.textContent = 'Record no longer exists.';
       return;
     }
     if (!response.ok) throw new Error(`Loading the record returned HTTP ${response.status}.`);
-    renderDetail(cell, await response.json());
+    const record = await response.json();
+    if (!stillExpanded()) return;
+    renderDetail(cell, record);
   } catch (error) {
-    cell.textContent = String(error);
+    if (stillExpanded()) cell.textContent = String(error);
+  } finally {
+    inFlight--;
   }
 }
 
@@ -290,55 +408,74 @@ async function retryRecord(id) {
 }
 
 async function deleteRecord(id) {
-  if (!confirm('Delete this failed record permanently?')) return;
+  if (!confirm(`Delete failed record ${shortId(id)} permanently?`)) return;
   await sendCommand('api/records/' + id, 'DELETE', `Record ${shortId(id)} deleted.`);
 }
 
 async function sendCommand(path, method, successMessage) {
+  inFlight++;
   try {
     const response = await fetch(api(path), { method });
     if (response.status === 404) {
-      setStatus('The record was already retried or deleted.', false);
+      setStatus('The record was already retried or deleted.', false, 'action');
     } else if (!response.ok) {
       throw new Error(`${method} ${path} returned HTTP ${response.status}.`);
     } else {
-      setStatus(successMessage, false);
+      setStatus(successMessage, false, 'action');
     }
-    await loadPage();
+    await loadPage(true);
   } catch (error) {
-    setStatus(String(error), true);
+    setStatus(String(error), true, 'action');
+  } finally {
+    inFlight--;
   }
 }
 
 async function retryAll() {
+  inFlight++;
   try {
     const response = await fetch(api('api/failed/retry-all'), { method: 'POST' });
     if (!response.ok) throw new Error(`Retry all returned HTTP ${response.status}.`);
     const data = await response.json();
-    setStatus(`Re-queued ${data.retried} record(s) for dispatch.`, false);
-    page = 1;
-    await loadPage();
+    setStatus(`Re-queued ${data.retried} record(s) for dispatch.`, false, 'action');
+    await loadPage(false, 1);
   } catch (error) {
-    setStatus(String(error), true);
+    setStatus(String(error), true, 'action');
+  } finally {
+    inFlight--;
   }
 }
 
 function renderPager() {
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
-  if (page > totalPages) {
-    page = totalPages;
-    loadPage();
-    return;
-  }
+  const totalPages = lastPageOf(totalCount);
   pageInfo.textContent = `Page ${page} of ${totalPages} — ${totalCount} failed record(s)`;
   prevBtn.disabled = page <= 1;
   nextBtn.disabled = page >= totalPages;
 }
 
+function autoRefreshTick() {
+  if (!autoRefresh) return;
+  if (document.visibilityState === 'hidden') return;
+  if (inFlight > 0) return;
+  loadPage(true);
+}
+
 document.getElementById('refreshBtn').addEventListener('click', () => loadPage());
 document.getElementById('retryAllBtn').addEventListener('click', retryAll);
-prevBtn.addEventListener('click', () => { page = Math.max(1, page - 1); loadPage(); });
-nextBtn.addEventListener('click', () => { page += 1; loadPage(); });
+prevBtn.addEventListener('click', () => loadPage(false, Math.max(1, page - 1)));
+nextBtn.addEventListener('click', () => loadPage(false, page + 1));
+
+rows.addEventListener('mouseover', flushPendingRender);
+rows.addEventListener('mouseleave', flushPendingRender);
+
+autoRefreshBox.checked = autoRefresh;
+autoRefreshBox.addEventListener('change', () => {
+  autoRefresh = autoRefreshBox.checked;
+  writeAutoRefresh(autoRefresh);
+});
+
+document.addEventListener('visibilitychange', autoRefreshTick);
+setInterval(autoRefreshTick, AUTO_REFRESH_MS);
 
 loadPage();
 </script>

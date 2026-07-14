@@ -506,6 +506,8 @@ Retrying resets `FailedAtUtc`, `Retries`, and `NextRetryAtUtc` but **keeps `Last
 
 **Secure by default.** Every endpoint is mapped with `RequireAuthorization()`; opt out explicitly via `app.MapWhisperOutbox(configure: o => o.AllowAnonymous = true)`. A host without authentication/authorization configured gets an `InvalidOperationException` on the first request — an intended fail-safe, because the dashboard exposes event payloads. `MapWhisperOutbox` returns an `IEndpointConventionBuilder` for policies of your own, and throws at map time when no outbox storage backend (and therefore no `IOutboxManagementStore`) is registered.
 
+> **Auto-refresh is on by default:** the failed-records page re-polls `GET /api/failed` every 10 seconds, so every open dashboard tab is a standing background query against your production outbox store. The header’s “Auto-refresh” checkbox toggles it; the preference is persisted per browser in `localStorage` under `whisper.outbox.autoRefresh` (in-memory only when storage is unavailable). A tick is skipped while the browser tab is hidden and while a request is already in flight, and a refresh fires immediately when the tab becomes visible again. An expanded detail row — like a pointer held over a row’s Retry or Delete button — defers only the re-render, not the poll.
+
 > The embedded page relies on inline `<script>`/`<style>`. If your host enforces a strict Content-Security-Policy, allow inline script and style for the dashboard route.
 
 ---
