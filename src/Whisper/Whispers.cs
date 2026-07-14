@@ -17,21 +17,13 @@ public static class Whispers
 
     public static IDomainEvent[] Peek()
     {
-        if (_domainEvents.Value is null)
-            return [];
-
-        return [.. _domainEvents.Value];
+        return _domainEvents.Value?.Snapshot() ?? [];
     }
 
     public static IDomainEvent[] GetAndClearEvents()
     {
         var events = _domainEvents.Value;
 
-        if (events is null || events.Count == 0)
-            return [];
-
-        var drained = events.ToArray();
-        events.Clear();
-        return drained;
+        return events is null ? [] : events.DrainAll();
     }
 }

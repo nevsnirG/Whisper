@@ -2,6 +2,7 @@
 using Whisper.Outbox.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 
 namespace Whisper.Outbox.UnitTests;
 
@@ -42,6 +43,34 @@ public class IWhisperBuilderExtensionsTests
 
         var dispatcher = serviceProvider.GetRequiredService<IDispatchDomainEvents>();
         dispatcher.Should().BeOfType<OutboxDispatcher>();
+    }
+
+    [Fact]
+    public void AddOutbox_WhenHostRegisteredTimeProvider_DoesNotOverrideIt()
+    {
+        var serviceCollection = new ServiceCollection() as IServiceCollection;
+        serviceCollection.AddOptions();
+        var fakeTimeProvider = new FakeTimeProvider();
+        serviceCollection.AddSingleton<TimeProvider>(fakeTimeProvider);
+        serviceCollection.AddWhisper(b => b.AddOutbox(_ => { }));
+
+        serviceCollection.Should().ContainSingle(r => r.ServiceType == typeof(TimeProvider));
+
+        using var serviceProvider = serviceCollection.BuildServiceProvider();
+        serviceProvider.GetRequiredService<TimeProvider>().Should().BeSameAs(fakeTimeProvider);
+    }
+
+    [Fact]
+    public void AddOutbox_WhenNoTimeProviderRegistered_RegistersSystemTimeProvider()
+    {
+        var serviceCollection = new ServiceCollection() as IServiceCollection;
+        serviceCollection.AddOptions();
+        serviceCollection.AddWhisper(b => b.AddOutbox(_ => { }));
+
+        serviceCollection.Should().ContainSingle(r => r.ServiceType == typeof(TimeProvider));
+
+        using var serviceProvider = serviceCollection.BuildServiceProvider();
+        serviceProvider.GetRequiredService<TimeProvider>().Should().BeSameAs(TimeProvider.System);
     }
 
     [Fact]

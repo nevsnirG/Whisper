@@ -103,7 +103,11 @@ using var scope = Whispers.CreateScope();
 var raised = Whispers.GetAndClearEvents(); // events for this scope (and children)
 ```
 
-> Most users don’t need to manage scopes explicitly — integrations (like MediatR) take care of flushing at the right time.
+Without an explicit scope, `Whispers.About()` stores events in an **implicit collector** bound to the current async context (`AsyncLocal`); `GetAndClearEvents()` and `Peek()` read that same context.
+
+`AsyncLocal` state flows **down** into awaited children, never **up**: events raised in a parallel branch (`Task.Run`, an unawaited task) without an enclosing explicit scope are invisible to the caller. Create the scope **before** branching so all branches share one collector.
+
+> Most users don’t need to manage scopes explicitly — integrations (like MediatR) take care of flushing at the right time. This is why the integrations (the AspNetCore middleware, the MediatR behavior) create an explicit scope per request/pipeline.
 
 ---
 
@@ -137,6 +141,17 @@ using Microsoft.AspNetCore.Builder;
 
 app.UseDomainEventDispatcherMiddleware();
 ```
+
+**Registration order with an ambient unit of work**
+
+If a middleware manages your unit of work, register it **before** (outer to) `UseDomainEventDispatcherMiddleware()`, and commit **after** `await next()` (commit-on-unwind). Whisper dispatches when the pipeline unwinds back through its middleware, so the dispatch lands inside the still-open unit of work:
+
+```csharp
+app.UseMiddleware<UnitOfWorkMiddleware>();      // outer: begins the unit of work, commits after next()
+app.UseDomainEventDispatcherMiddleware();       // inner: dispatches before the commit
+```
+
+> **Warning — OnStarting commits:** unit-of-work middlewares that commit inside `HttpResponse.OnStarting` are unsupported — `OnStarting` fires at the first response write, inside `next()`, before Whisper’s dispatch, so outbox writes would land after the commit. Use commit-on-unwind ordering instead.
 
 ---
 
@@ -384,11 +399,14 @@ b.AddOutbox(ob =>
     ob.AddSqlServer(new() { /* ... */ });
     ob.ConfigureWorker(w =>
     {
-        w.BatchSize         = 10;   // default
-        w.PollingIntervalMs = 1000; // default
+        w.BatchSize              = 10;   // default
+        w.PollingIntervalMs      = 1000; // default
+        w.UsePollingTimeProvider = false; // default — polling waits in real time
     });
 });
 ```
+
+> **Polling clock:** polling waits in real time by default — a globally registered fake `TimeProvider` does **not** freeze polling unless you opt in via `w.UsePollingTimeProvider = true` (drives the polling delay from the registered `TimeProvider`), but it **does** drive all timestamps and retry due-times. `AddOutbox` registers `TimeProvider.System` with `TryAddSingleton`, so a host-registered `TimeProvider` is never overridden.
 
 The worker reads records that are **due**: not dispatched, not failed, and `NextRetryAtUtc` null or at/before now — ordered by `NextRetryAtUtc` ascending (nulls first), then `Id` ascending. With no retry delay configured this is identical to plain `Id` order. Per record in a batch:
 
@@ -570,7 +588,7 @@ public interface IDispatchDomainEvents
 No. Raise events with `Whispers.About(...)` and let Whisper collect them.
 
 **Is it safe across `async/await`?**  
-Yes. Whisper uses `AsyncLocal<T>` to keep events bound to the current async execution flow.
+Yes. Whisper uses `AsyncLocal<T>` to keep events bound to the current async execution flow. Concurrent `About()` calls inside a shared scope are thread-safe. Parallel branches without their own scope each get an isolated implicit collector whose events don’t flow back to the parent — by design, `AsyncLocal` flows down, not up.
 
 **How do duplicates get handled?**  
 Whisper does not attempt to deduplicate; if you need deduplication, implement it at your dispatcher/consumer side. Outbox publishing is at-least-once: a record that was dispatched successfully but not yet marked (e.g., a crash between the dispatch and `SetDispatchedAt`) is re-dispatched on a later poll — consumers must be idempotent.

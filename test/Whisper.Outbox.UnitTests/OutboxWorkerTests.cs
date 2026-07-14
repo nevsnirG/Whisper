@@ -192,6 +192,53 @@ public class OutboxWorkerTests
         await harness.OutboxStore.Received(2).ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task WhenUsePollingTimeProviderEnabled_AdvancingFakeTimeTriggersNextPoll_WithoutRealWaiting()
+    {
+        using var harness = new WorkerHarness();
+        harness.WorkerOptions.UsePollingTimeProvider = true;
+        harness.WorkerOptions.PollingIntervalMs = 300_000;
+        var callCount = 0;
+        harness.OutboxStore.ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                callCount++;
+                if (callCount == 2)
+                    harness.Cts.Cancel();
+                return Array.Empty<OutboxRecord>();
+            });
+
+        var runTask = harness.RunToCompletion();
+        while (!runTask.IsCompleted)
+        {
+            harness.TimeProvider.Advance(TimeSpan.FromMilliseconds(300_000));
+            await Task.Delay(10);
+        }
+        await runTask;
+
+        await harness.OutboxStore.Received(2).ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task WhenUsePollingTimeProviderDisabled_FakeTimeProviderDoesNotGatePolling()
+    {
+        using var harness = new WorkerHarness();
+        harness.WorkerOptions.PollingIntervalMs = 1;
+        var callCount = 0;
+        harness.OutboxStore.ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                callCount++;
+                if (callCount == 2)
+                    harness.Cts.Cancel();
+                return Array.Empty<OutboxRecord>();
+            });
+
+        await harness.RunToCompletion();
+
+        await harness.OutboxStore.Received(2).ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
+    }
+
     private static OutboxRecord CreateRecord(int retries = 0, string payload = "SomePayload", string type = "SomeType") => new()
     {
         Id = Guid.NewGuid(),
