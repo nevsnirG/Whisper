@@ -176,6 +176,7 @@ public class OutboxWorkerTests
     {
         using var harness = new WorkerHarness();
         harness.WorkerOptions.PollingIntervalMs = 1;
+        harness.WorkerOptions.UsePollingTimeProvider = false;
         var callCount = 0;
         harness.OutboxStore.ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>())
             .Returns(_ =>
@@ -224,6 +225,7 @@ public class OutboxWorkerTests
     {
         using var harness = new WorkerHarness();
         harness.WorkerOptions.PollingIntervalMs = 1;
+        harness.WorkerOptions.UsePollingTimeProvider = false;
         var callCount = 0;
         harness.OutboxStore.ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>())
             .Returns(_ =>
