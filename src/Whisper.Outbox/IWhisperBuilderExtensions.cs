@@ -9,15 +9,8 @@ public static class IWhisperBuilderExtensions
 {
     public static IWhisperBuilder AddOutbox(this IWhisperBuilder whisperBuilder, Action<IOutboxBuilder> configure)
     {
-        var domainEventDispatcherServiceDescriptors = whisperBuilder.Services
-            .Where(s => s.ServiceType == typeof(IDispatchDomainEvents))
-            .ToArray();
-        whisperBuilder.Services.RemoveAll<IDispatchDomainEvents>();
+        DecorateDispatchersAsInnerDispatchers(whisperBuilder);
 
-        foreach (var serviceDescriptor in domainEventDispatcherServiceDescriptors)
-        {
-            AddKeyedFromDescriptor(whisperBuilder.Services, serviceDescriptor, ServiceKeys.InnerDispatcher);
-        }
         whisperBuilder.Services.TryAddTransient<IUuidProvider, DefaultUuidProvider>();
         whisperBuilder.Services.TryAddSingleton(TimeProvider.System);
         whisperBuilder.Services
@@ -70,6 +63,19 @@ public static class IWhisperBuilderExtensions
     {
         outboxBuilder.Services.Configure(configure);
         return outboxBuilder;
+    }
+
+    private static void DecorateDispatchersAsInnerDispatchers(IWhisperBuilder whisperBuilder)
+    {
+        var domainEventDispatcherServiceDescriptors = whisperBuilder.Services
+            .Where(s => s.ServiceType == typeof(IDispatchDomainEvents))
+            .ToArray();
+        whisperBuilder.Services.RemoveAll<IDispatchDomainEvents>();
+
+        foreach (var serviceDescriptor in domainEventDispatcherServiceDescriptors)
+        {
+            AddKeyedFromDescriptor(whisperBuilder.Services, serviceDescriptor, ServiceKeys.InnerDispatcher);
+        }
     }
 
     private static void AddKeyedFromDescriptor(IServiceCollection services, ServiceDescriptor sd, object serviceKey)
