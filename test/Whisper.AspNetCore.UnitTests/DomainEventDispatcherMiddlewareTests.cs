@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Hosting;
 using Whisper;
 using Whisper.Abstractions;
 
@@ -83,28 +82,7 @@ public class DomainEventDispatcherMiddlewareTests
 
         await sut.InvokeAsync(context, [dispatcher]);
 
-        await dispatcher.Received(1)
-            .Dispatch(Arg.Any<IDomainEvent[]>(), Arg.Is<CancellationToken>(t => !t.IsCancellationRequested));
-    }
-
-    [Fact]
-    public async Task InvokeAsync_WithApplicationLifetime_DispatchesWithApplicationStoppingToken()
-    {
-        using var stoppingCts = new CancellationTokenSource();
-        var applicationLifetime = Substitute.For<IHostApplicationLifetime>();
-        applicationLifetime.ApplicationStopping.Returns(stoppingCts.Token);
-        var dispatcher = Substitute.For<IDispatchDomainEvents>();
-        var context = new DefaultHttpContext();
-        RequestDelegate next = _ =>
-        {
-            Whispers.About(new TestEvent("test"));
-            return Task.CompletedTask;
-        };
-        var sut = new DomainEventDispatcherMiddleware(next, applicationLifetime);
-
-        await sut.InvokeAsync(context, [dispatcher]);
-
-        await dispatcher.Received(1).Dispatch(Arg.Any<IDomainEvent[]>(), stoppingCts.Token);
+        await dispatcher.Received(1).Dispatch(Arg.Any<IDomainEvent[]>(), CancellationToken.None);
     }
 
     private sealed record TestEvent(string Value) : IDomainEvent;

@@ -28,10 +28,12 @@ public static class IWhisperBuilderExtensions
             .AddSingleton<IDomainEventSerializer, DomainEventSerializer>()
             .AddHostedService<OutboxInstaller>()
             .AddHostedService<OutboxWorker>();
-        // BatchSize 0 means "no limit" to the Mongo driver and PollingIntervalMs -1 is Timeout.Infinite to Task.Delay.
+        // Only values that break the worker are rejected: BatchSize 0 means "no limit" to the Mongo driver
+        // (and selects nothing on SQL Server), PollingIntervalMs -1 is Timeout.Infinite to Task.Delay and
+        // other negative intervals throw. A 0 ms interval polls continuously, which works.
         whisperBuilder.Services.AddOptions<OutboxWorkerOptions>()
             .Validate(o => o.BatchSize > 0, $"{nameof(OutboxWorkerOptions)}.{nameof(OutboxWorkerOptions.BatchSize)} must be greater than 0.")
-            .Validate(o => o.PollingIntervalMs > 0, $"{nameof(OutboxWorkerOptions)}.{nameof(OutboxWorkerOptions.PollingIntervalMs)} must be greater than 0.")
+            .Validate(o => o.PollingIntervalMs >= 0, $"{nameof(OutboxWorkerOptions)}.{nameof(OutboxWorkerOptions.PollingIntervalMs)} must not be negative.")
             .ValidateOnStart();
         configure?.Invoke(new OutboxBuilder(whisperBuilder.Services));
         return whisperBuilder;

@@ -5,7 +5,9 @@ using Whisper.Outbox.Abstractions;
 namespace Whisper.Outbox.SqlServer;
 internal sealed class SqlOutboxInstaller(SqlOutboxConfiguration sqlOutboxConfiguration) : IInstallOutbox
 {
-    private const int InstallLockTimeoutMs = 60_000;
+    // The holder runs two batches with the default 30 s command timeout each, so a waiter must be willing to
+    // wait well past 60 s or it can give up just as the holder finishes.
+    private const int InstallLockTimeoutMs = 120_000;
 
     // sp_getapplock resource names are limited to 255 characters.
     private const int MaxLockResourceLength = 255;

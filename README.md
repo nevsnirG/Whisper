@@ -417,7 +417,7 @@ b.AddOutbox(ob =>
 });
 ```
 
-`BatchSize` and `PollingIntervalMs` must be greater than 0; invalid values fail options validation at host startup.
+`BatchSize` must be greater than 0 and `PollingIntervalMs` must not be negative; invalid values fail options validation at host startup.
 
 > **Polling clock:** by default the polling delay is driven by the registered `TimeProvider`, so a globally registered fake `TimeProvider` (e.g. `FakeTimeProvider`) **freezes polling** until you advance it. Set `w.UsePollingTimeProvider = false` to make polling wait in real time while the registered `TimeProvider` still drives all timestamps and retry due-times. `AddOutbox` registers `TimeProvider.System` with `TryAddSingleton`, so a host-registered `TimeProvider` is never overridden.
 

@@ -1,5 +1,4 @@
 using MediatR;
-using Microsoft.Extensions.Hosting;
 using Whisper.Abstractions;
 
 namespace Whisper.MediatR.UnitTests;
@@ -90,27 +89,7 @@ public class DomainEventCaptureBehaviorTests
             return Task.FromResult("response");
         }), requestCts.Token);
 
-        await dispatcher.Received(1).Dispatch(
-            Arg.Any<IDomainEvent[]>(),
-            Arg.Is<CancellationToken>(t => !t.IsCancellationRequested));
-    }
-
-    [Fact]
-    public async Task Handle_WithApplicationLifetime_DispatchesWithApplicationStoppingToken()
-    {
-        using var stoppingCts = new CancellationTokenSource();
-        var applicationLifetime = Substitute.For<IHostApplicationLifetime>();
-        applicationLifetime.ApplicationStopping.Returns(stoppingCts.Token);
-        var dispatcher = Substitute.For<IDispatchDomainEvents>();
-        var sut = new DomainEventCaptureBehavior<TestRequest, string>([dispatcher], applicationLifetime);
-
-        await sut.Handle(new TestRequest(), Next.From(() =>
-        {
-            Whispers.About(new TestEvent("test"));
-            return Task.FromResult("response");
-        }), CancellationToken.None);
-
-        await dispatcher.Received(1).Dispatch(Arg.Any<IDomainEvent[]>(), stoppingCts.Token);
+        await dispatcher.Received(1).Dispatch(Arg.Any<IDomainEvent[]>(), CancellationToken.None);
     }
 
     private record TestRequest : IRequest<string>;

@@ -140,8 +140,8 @@ public class IWhisperBuilderExtensionsTests
     [Theory]
     [InlineData(0, 1000, nameof(OutboxWorkerOptions.BatchSize))]
     [InlineData(-1, 1000, nameof(OutboxWorkerOptions.BatchSize))]
-    [InlineData(10, 0, nameof(OutboxWorkerOptions.PollingIntervalMs))]
     [InlineData(10, -1, nameof(OutboxWorkerOptions.PollingIntervalMs))]
+    [InlineData(10, -2, nameof(OutboxWorkerOptions.PollingIntervalMs))]
     public void ConfigureWorker_InvalidOptions_FailValidation(int batchSize, int pollingIntervalMs, string invalidOption)
     {
         var serviceCollection = new ServiceCollection() as IServiceCollection;
@@ -157,6 +157,19 @@ public class IWhisperBuilderExtensionsTests
 
         act.Should().Throw<OptionsValidationException>()
             .Which.Message.Should().Contain(invalidOption);
+    }
+
+    [Fact]
+    public void ConfigureWorker_ZeroPollingInterval_PassesValidation()
+    {
+        var serviceCollection = new ServiceCollection() as IServiceCollection;
+        serviceCollection.AddOptions();
+        serviceCollection.AddWhisper(b => b.AddOutbox(o => o.ConfigureWorker(w => w.PollingIntervalMs = 0)));
+
+        using var serviceProvider = serviceCollection.BuildServiceProvider();
+        var options = serviceProvider.GetRequiredService<IOptions<OutboxWorkerOptions>>().Value;
+
+        options.PollingIntervalMs.Should().Be(0, "a 0 ms interval polls continuously, which is wasteful but works");
     }
 
     [Fact]
