@@ -11,6 +11,8 @@ public static class Whispers
 
     public static void About(IDomainEvent domainEvent)
     {
+        ArgumentNullException.ThrowIfNull(domainEvent);
+
         _domainEvents.Value ??= [];
         _domainEvents.Value!.Add(domainEvent);
     }

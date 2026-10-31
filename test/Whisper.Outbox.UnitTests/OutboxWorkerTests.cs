@@ -53,6 +53,22 @@ public class OutboxWorkerTests
     }
 
     [Fact]
+    public async Task WhenStoppingDuringBatch_MarksDispatchedRecordWithNonCancelledToken()
+    {
+        using var harness = new WorkerHarness();
+        var outboxRecord = CreateRecord();
+        harness.Serializer.Deserialize("SomePayload", "SomeType").Returns(new TestEvent());
+        // Cancels the stopping token as soon as the batch is read, so the dispatch completes during shutdown.
+        harness.ReturnBatchOnceThenCancel(outboxRecord);
+
+        await harness.RunToCompletion();
+
+        harness.Cts.IsCancellationRequested.Should().BeTrue();
+        await harness.OutboxStore.Received(1).SetDispatchedAt(outboxRecord, StartTime,
+            Arg.Is<CancellationToken>(t => !t.IsCancellationRequested));
+    }
+
+    [Fact]
     public async Task WhenDeserializationFails_MarksRecordAsFailedWithError_AndContinuesWithNextRecord()
     {
         using var harness = new WorkerHarness();

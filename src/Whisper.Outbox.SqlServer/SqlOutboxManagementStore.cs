@@ -21,6 +21,8 @@ internal sealed class SqlOutboxManagementStore(SqlOutboxConfiguration sqlOutboxC
     {
         page = Math.Max(page, 1);
         pageSize = Math.Clamp(pageSize, MinPageSize, MaxPageSize);
+        // 64-bit math: (page - 1) * pageSize overflows int for huge pages; any offset that large is past the end anyway.
+        var offset = (int)Math.Min((long)(page - 1) * pageSize, int.MaxValue);
 
         var sql = $@"
 SELECT COUNT_BIG(*) FROM {QualifiedTableName()} WHERE FailedAtUtc IS NOT NULL;
@@ -33,7 +35,7 @@ OFFSET @offset ROWS FETCH NEXT @fetch ROWS ONLY;";
 
         await using var connection = await OpenConnection(cancellationToken);
         using var cmd = new SqlCommand(sql, connection);
-        cmd.Parameters.Add(new SqlParameter("@offset", SqlDbType.Int) { Value = (page - 1) * pageSize });
+        cmd.Parameters.Add(new SqlParameter("@offset", SqlDbType.Int) { Value = offset });
         cmd.Parameters.Add(new SqlParameter("@fetch", SqlDbType.Int) { Value = pageSize });
 
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);

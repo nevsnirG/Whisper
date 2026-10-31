@@ -1,4 +1,5 @@
 ﻿using MediatR;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Whisper.Abstractions;
 using Whisper.MediatR;
 
@@ -7,9 +8,10 @@ public static class IWhisperBuilderExtensions
 {
     public static IWhisperBuilder AddMediatR(this IWhisperBuilder builder)
     {
-        builder.Services
-            .AddScoped<IDispatchDomainEvents, MediatorDispatcher>()
-            .AddTransient(typeof(IPipelineBehavior<,>), typeof(DomainEventCaptureBehavior<,>));
+        // TryAddEnumerable keeps a repeated call from registering a second dispatcher and behavior,
+        // which would publish every event twice.
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Scoped<IDispatchDomainEvents, MediatorDispatcher>());
+        builder.Services.TryAddEnumerable(ServiceDescriptor.Transient(typeof(IPipelineBehavior<,>), typeof(DomainEventCaptureBehavior<,>)));
         return builder;
     }
 }

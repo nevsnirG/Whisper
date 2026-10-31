@@ -36,4 +36,22 @@ public class MediatorDispatcherTests
         await _mediatorMock.Received(1).Publish(domainEvents[1], cancellationToken);
         _mediatorMock.ReceivedCalls().Should().HaveCount(2);
     }
+
+    [Fact]
+    public async Task Dispatch_DomainEvents_PublishesNextOnlyAfterPreviousCompleted()
+    {
+        var firstPublish = new TaskCompletionSource();
+        var domainEvents = new IDomainEvent[] { Substitute.For<IDomainEvent>(), Substitute.For<IDomainEvent>() };
+        _mediatorMock.Publish(domainEvents[0], Arg.Any<CancellationToken>()).Returns(firstPublish.Task);
+
+        var dispatch = _sut.Dispatch(domainEvents, CancellationToken.None);
+
+        await _mediatorMock.Received(1).Publish(domainEvents[0], Arg.Any<CancellationToken>());
+        await _mediatorMock.DidNotReceive().Publish(domainEvents[1], Arg.Any<CancellationToken>());
+
+        firstPublish.SetResult();
+        await dispatch;
+
+        await _mediatorMock.Received(1).Publish(domainEvents[1], Arg.Any<CancellationToken>());
+    }
 }

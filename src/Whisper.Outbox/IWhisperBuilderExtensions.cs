@@ -28,6 +28,11 @@ public static class IWhisperBuilderExtensions
             .AddSingleton<IDomainEventSerializer, DomainEventSerializer>()
             .AddHostedService<OutboxInstaller>()
             .AddHostedService<OutboxWorker>();
+        // BatchSize 0 means "no limit" to the Mongo driver and PollingIntervalMs -1 is Timeout.Infinite to Task.Delay.
+        whisperBuilder.Services.AddOptions<OutboxWorkerOptions>()
+            .Validate(o => o.BatchSize > 0, $"{nameof(OutboxWorkerOptions)}.{nameof(OutboxWorkerOptions.BatchSize)} must be greater than 0.")
+            .Validate(o => o.PollingIntervalMs > 0, $"{nameof(OutboxWorkerOptions)}.{nameof(OutboxWorkerOptions.PollingIntervalMs)} must be greater than 0.")
+            .ValidateOnStart();
         configure?.Invoke(new OutboxBuilder(whisperBuilder.Services));
         return whisperBuilder;
     }
@@ -67,13 +72,15 @@ public static class IWhisperBuilderExtensions
 
     private static void DecorateDispatchersAsInnerDispatchers(IWhisperBuilder whisperBuilder)
     {
+        // Keyed registrations (the host's own, or the inner dispatchers of an earlier AddOutbox call) are
+        // not part of the request path, so they are left as they are.
         var domainEventDispatcherServiceDescriptors = whisperBuilder.Services
-            .Where(s => s.ServiceType == typeof(IDispatchDomainEvents))
+            .Where(s => s.ServiceType == typeof(IDispatchDomainEvents) && !s.IsKeyedService)
             .ToArray();
-        whisperBuilder.Services.RemoveAll<IDispatchDomainEvents>();
 
         foreach (var serviceDescriptor in domainEventDispatcherServiceDescriptors)
         {
+            whisperBuilder.Services.Remove(serviceDescriptor);
             AddKeyedFromDescriptor(whisperBuilder.Services, serviceDescriptor, ServiceKeys.InnerDispatcher);
         }
     }

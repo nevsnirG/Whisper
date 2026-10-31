@@ -86,10 +86,13 @@ public sealed class MongoDbOutboxManagementStoreTests : IAsyncLifetime
 
         var minPage = await _managementStore.GetFailed(0, 0, CancellationToken.None);
         var maxPage = await _managementStore.GetFailed(1, 1000, CancellationToken.None);
+        var hugePage = await _managementStore.GetFailed(int.MaxValue, 200, CancellationToken.None);
 
         minPage.TotalCount.Should().Be(201);
         minPage.Records.Should().HaveCount(1, "page and pageSize below 1 are clamped to 1");
         maxPage.Records.Should().HaveCount(200, "pageSize is clamped to 200");
+        hugePage.TotalCount.Should().Be(201);
+        hugePage.Records.Should().BeEmpty("a skip beyond int range must not overflow into a negative Skip");
     }
 
     [Fact]

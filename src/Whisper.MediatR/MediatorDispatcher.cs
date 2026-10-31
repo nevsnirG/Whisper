@@ -9,9 +9,11 @@ internal sealed class MediatorDispatcher(IMediator mediator) : IDispatchDomainEv
         return mediator.Publish(domainEvent, cancellationToken);
     }
 
-    public Task Dispatch(IDomainEvent[] domainEvents, CancellationToken cancellationToken)
+    public async Task Dispatch(IDomainEvent[] domainEvents, CancellationToken cancellationToken)
     {
-        return Task.WhenAll(
-            domainEvents.Select(d => mediator.Publish(d, cancellationToken)));
+        // One at a time, in raised order: handlers commonly share scoped services, such as an
+        // EF Core DbContext, that do not support concurrent use.
+        foreach (var domainEvent in domainEvents)
+            await mediator.Publish(domainEvent, cancellationToken);
     }
 }

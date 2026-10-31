@@ -20,6 +20,8 @@ internal sealed class MongoDbOutboxManagementStore(IMongoCollection<OutboxRecord
     {
         page = Math.Max(page, 1);
         pageSize = Math.Clamp(pageSize, MinPageSize, MaxPageSize);
+        // 64-bit math: (page - 1) * pageSize overflows int for huge pages; any offset that large is past the end anyway.
+        var skip = (int)Math.Min((long)(page - 1) * pageSize, int.MaxValue);
 
         var totalCount = await outboxCollection.CountDocumentsAsync(FailedFilter, null, cancellationToken);
         // The excluded Payload hydrates as null despite being non-nullable;
@@ -27,7 +29,7 @@ internal sealed class MongoDbOutboxManagementStore(IMongoCollection<OutboxRecord
         var records = await outboxCollection.Find(FailedFilter)
             .SortByDescending(x => x.FailedAtUtc)
             .ThenBy(x => x.Id)
-            .Skip((page - 1) * pageSize)
+            .Skip(skip)
             .Limit(pageSize)
             .Project<OutboxRecord>(Builders<OutboxRecord>.Projection.Exclude(x => x.Payload))
             .ToListAsync(cancellationToken);

@@ -1,5 +1,6 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
+using System.Transactions;
 using Whisper.Outbox.Abstractions;
 using Whisper.Outbox.IntegrationTests.Fakes;
 using Whisper.Outbox.SqlServer;
@@ -77,6 +78,37 @@ public sealed class SqlOutboxStoreTests : IAsyncLifetime
         var batch = await store.ReadNextBatch(10, DateTimeOffset.UtcNow, CancellationToken.None);
         batch.Should().BeEmpty();
         (await ReadRow(record.Id)).DispatchedAtUtc.Should().Be(dispatchedAt);
+    }
+
+    [Fact]
+    public async Task Add_MultipleRecords_WhenAnInsertFails_PersistsNoneOfThem()
+    {
+        var duplicateId = Guid.NewGuid();
+        var records = new[] { NewRecord(), NewRecord(duplicateId), NewRecord(duplicateId) };
+        using var scope = _provider.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
+
+        var act = () => store.Add(records, CancellationToken.None);
+
+        await act.Should().ThrowAsync<SqlException>();
+        var batch = await store.ReadNextBatch(10, DateTimeOffset.UtcNow, CancellationToken.None);
+        batch.Should().BeEmpty("the batch is inserted in one transaction, so the rows before the failing one roll back");
+    }
+
+    [Fact]
+    public async Task Add_MultipleRecords_InsideUncompletedTransactionScope_JoinsItAndRollsBack()
+    {
+        var records = new[] { NewRecord(), NewRecord() };
+        using (new TransactionScope(TransactionScopeAsyncFlowOption.Enabled))
+        using (var scope = _provider.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<IOutboxStore>().Add(records, CancellationToken.None);
+        }
+
+        using var readScope = _provider.CreateScope();
+        var batch = await readScope.ServiceProvider.GetRequiredService<IOutboxStore>()
+            .ReadNextBatch(10, DateTimeOffset.UtcNow, CancellationToken.None);
+        batch.Should().BeEmpty("the store must not commit a local transaction of its own inside an ambient one");
     }
 
     // Exercises the prepared-statement parameter-reuse loop in the batch Add overload;

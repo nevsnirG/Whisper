@@ -106,6 +106,17 @@ public class WhispersTests
                     .Which.Value.Should().Be("I was raised in the top scope.");
     }
 
+    [Fact(DisplayName = "A null domain event is rejected when raised instead of failing later at dispatch.")]
+    public void AboutRejectsNullDomainEvent()
+    {
+        using var scope = Whispers.CreateScope();
+
+        var act = () => Whispers.About(null!);
+
+        act.Should().Throw<ArgumentNullException>();
+        Whispers.Peek().Should().BeEmpty();
+    }
+
     [Fact(DisplayName = "Domain events raised inside a scope are not available higher in the synchronous callstack outside of the scope in which they were raised.")]
     public void DomainEventsInScopeAreNotAvailableOutsideOfScope()
     {

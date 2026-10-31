@@ -32,6 +32,29 @@ public sealed class SqlOutboxInstallerTests(MsSqlFixture sqlFixture)
         (await TableExists(connectionString, expectedSchemaName, configuration.TableName)).Should().BeTrue();
     }
 
+    // Several instances starting together against a fresh database: without the install lock they race
+    // on CREATE TABLE and all but one fail with "There is already an object named ...".
+    [Fact]
+    public async Task InstallCollection_ConcurrentRunsOnFreshDatabase_AllSucceed()
+    {
+        var connectionString = await sqlFixture.CreateDatabaseAsync();
+        var configuration = new SqlOutboxConfiguration { ConnectionString = connectionString };
+        var providers = Enumerable.Range(0, 4).Select(_ => BuildServiceProvider(configuration)).ToArray();
+        try
+        {
+            var act = () => Task.WhenAll(providers.Select(p =>
+                Task.Run(() => p.GetRequiredService<IInstallOutbox>().InstallCollection(CancellationToken.None))));
+
+            await act.Should().NotThrowAsync();
+            (await TableExists(connectionString, configuration.SchemaName, configuration.TableName)).Should().BeTrue();
+        }
+        finally
+        {
+            foreach (var provider in providers)
+                await provider.DisposeAsync();
+        }
+    }
+
     private static ServiceProvider BuildServiceProvider(SqlOutboxConfiguration configuration)
     {
         var services = new ServiceCollection();

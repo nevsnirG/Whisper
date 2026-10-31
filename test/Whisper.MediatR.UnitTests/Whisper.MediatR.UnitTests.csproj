@@ -7,7 +7,17 @@
 		<IsPackable>false</IsPackable>
 	</PropertyGroup>
 
+	<PropertyGroup>
+		<!-- Run against another MediatR version with -p:MediatRVersion=x.y.z; Whisper.MediatR itself stays compiled
+		     against its lowest supported version, which is exactly the binary-compatibility case under test. -->
+		<MediatRVersion Condition="'$(MediatRVersion)' == ''">12.0.1</MediatRVersion>
+		<DefineConstants Condition="$([MSBuild]::VersionGreaterThanOrEquals('$(MediatRVersion)', '12.5.0'))">$(DefineConstants);MEDIATR_NEXT_TAKES_CANCELLATION_TOKEN</DefineConstants>
+	</PropertyGroup>
+
 	<ItemGroup>
+		<PackageReference Include="MediatR" Version="$(MediatRVersion)" />
+		<PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+		<PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.1" />
 		<PackageReference Include="FluentAssertions" Version="6.12.0" />
 		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
 		<PackageReference Include="NSubstitute" Version="5.3.0" />

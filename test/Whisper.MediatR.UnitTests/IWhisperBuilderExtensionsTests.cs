@@ -20,4 +20,23 @@ public class IWhisperBuilderExtensionsTests
             s.ServiceType == typeof(IPipelineBehavior<,>)
             && s.ImplementationType == typeof(DomainEventCaptureBehavior<,>));
     }
+
+    [Fact]
+    public void AddMediatR_CalledTwice_RegistersDispatcherAndCaptureBehaviorOnce()
+    {
+        var serviceCollection = new ServiceCollection() as IServiceCollection;
+        serviceCollection.AddWhisper(b =>
+        {
+            b.AddMediatR();
+            b.AddMediatR();
+        });
+
+        serviceCollection.Should().ContainSingle(s =>
+            s.ServiceType == typeof(IDispatchDomainEvents)
+            && s.ImplementationType == typeof(MediatorDispatcher));
+
+        serviceCollection.Should().ContainSingle(s =>
+            s.ServiceType == typeof(IPipelineBehavior<,>)
+            && s.ImplementationType == typeof(DomainEventCaptureBehavior<,>));
+    }
 }

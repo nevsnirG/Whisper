@@ -5,20 +5,74 @@ using Whisper.Outbox.Abstractions;
 namespace Whisper.Outbox.SqlServer;
 internal sealed class SqlOutboxInstaller(SqlOutboxConfiguration sqlOutboxConfiguration) : IInstallOutbox
 {
+    private const int InstallLockTimeoutMs = 60_000;
+
+    // sp_getapplock resource names are limited to 255 characters.
+    private const int MaxLockResourceLength = 255;
+
     public async Task InstallCollection(CancellationToken cancellationToken)
     {
         using var connection = new SqlConnection(sqlOutboxConfiguration.ConnectionString);
         var rawSchemaName = SqlIdentifier.Strip(sqlOutboxConfiguration.SchemaName);
         var qualifiedSchema = SqlIdentifier.Bracket(sqlOutboxConfiguration.SchemaName);
         var qualifiedTable = $"{qualifiedSchema}.{SqlIdentifier.Bracket(sqlOutboxConfiguration.TableName)}";
+        var lockResource = InstallLockResource(rawSchemaName, SqlIdentifier.Strip(sqlOutboxConfiguration.TableName));
 
         await connection.OpenAsync(cancellationToken);
 
-        // Two sequential batches on purpose: T-SQL resolves column names at batch compile time,
-        // so the constraint/index batch would fail against a legacy-shape table before the
-        // column-adding ALTERs ever ran.
-        await ExecuteSchemaTableAndColumnsBatch(connection, qualifiedSchema, qualifiedTable, rawSchemaName, cancellationToken);
-        await ExecuteConstraintsAndIndexesBatch(connection, qualifiedTable, cancellationToken);
+        // Instances starting together against a fresh database would otherwise race on CREATE TABLE.
+        // The later one waits here and then finds every object in place.
+        await AcquireInstallLock(connection, lockResource, cancellationToken);
+        try
+        {
+            // Two sequential batches on purpose: T-SQL resolves column names at batch compile time,
+            // so the constraint/index batch would fail against a legacy-shape table before the
+            // column-adding ALTERs ever ran.
+            await ExecuteSchemaTableAndColumnsBatch(connection, qualifiedSchema, qualifiedTable, rawSchemaName, cancellationToken);
+            await ExecuteConstraintsAndIndexesBatch(connection, qualifiedTable, cancellationToken);
+        }
+        finally
+        {
+            await ReleaseInstallLock(connection, lockResource);
+        }
+    }
+
+    // A truncated name can only make two installs share a lock, which just runs them one after the other.
+    private static string InstallLockResource(string rawSchemaName, string rawTableName)
+    {
+        var resource = $"Whisper.Outbox.Install:{rawSchemaName}.{rawTableName}";
+        return resource.Length <= MaxLockResourceLength ? resource : resource[..MaxLockResourceLength];
+    }
+
+    private static async Task AcquireInstallLock(SqlConnection connection, string lockResource, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = @"
+    DECLARE @result INT;
+    EXEC @result = sp_getapplock @Resource = @resource, @LockMode = N'Exclusive', @LockOwner = N'Session', @LockTimeout = @lockTimeoutMs;
+    SELECT @result;";
+        // The lock wait must end on @LockTimeout, not on the default 30 s command timeout.
+        command.CommandTimeout = InstallLockTimeoutMs / 1000 + 30;
+        command.Parameters.Add(new SqlParameter("@resource", SqlDbType.NVarChar, MaxLockResourceLength) { Value = lockResource });
+        command.Parameters.Add(new SqlParameter("@lockTimeoutMs", SqlDbType.Int) { Value = InstallLockTimeoutMs });
+
+        // 0 = granted, 1 = granted after waiting; negative = timeout (-1), cancelled (-2), deadlock victim (-3), error (-999).
+        var result = (int)(await command.ExecuteScalarAsync(cancellationToken))!;
+        if (result < 0)
+            throw new InvalidOperationException(
+                $"Could not acquire the outbox install lock '{lockResource}' within {InstallLockTimeoutMs} ms (sp_getapplock returned {result}).");
+    }
+
+    private static async Task ReleaseInstallLock(SqlConnection connection, string lockResource)
+    {
+        // A broken connection has already released its session-owned lock.
+        if (connection.State != ConnectionState.Open)
+            return;
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "EXEC sp_releaseapplock @Resource = @resource, @LockOwner = N'Session';";
+        command.Parameters.Add(new SqlParameter("@resource", SqlDbType.NVarChar, MaxLockResourceLength) { Value = lockResource });
+        await command.ExecuteNonQueryAsync(CancellationToken.None);
     }
 
     private static async Task ExecuteSchemaTableAndColumnsBatch(SqlConnection connection, string qualifiedSchema, string qualifiedTable, string rawSchemaName, CancellationToken cancellationToken)

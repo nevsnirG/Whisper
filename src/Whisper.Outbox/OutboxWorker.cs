@@ -86,7 +86,9 @@ internal sealed class OutboxWorker(IDomainEventSerializer domainEventSerializer,
         try
         {
             await DispatchToInnerDispatchers(domainEvent, cancellationToken);
-            await outboxStore.SetDispatchedAt(outboxRecord, timeProvider.GetUtcNow(), cancellationToken);
+            // Not cancellable: the dispatch already happened, and a shutdown cancelling this mark
+            // would make the record dispatch again after the restart.
+            await outboxStore.SetDispatchedAt(outboxRecord, timeProvider.GetUtcNow(), CancellationToken.None);
         }
         catch (Exception ex)
         {

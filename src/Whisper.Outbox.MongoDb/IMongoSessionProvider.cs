@@ -4,7 +4,7 @@ namespace Whisper.Outbox.MongoDb;
 
 public interface IMongoSessionProvider
 {
-    public bool IsInTransaction => Session is not null;
+    public bool IsInTransaction => Session is { IsInTransaction: true };
 
     IClientSessionHandle? Session { get; }
 }

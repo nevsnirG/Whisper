@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Hosting;
 using Whisper;
 using Whisper.Abstractions;
 
@@ -36,9 +37,9 @@ public class DomainEventDispatcherMiddlewareTests
         await sut.InvokeAsync(context, [dispatcher1, dispatcher2]);
 
         await dispatcher1.Received(1)
-            .Dispatch(Arg.Is<IDomainEvent[]>(e => e.Length == 1), context.RequestAborted);
+            .Dispatch(Arg.Is<IDomainEvent[]>(e => e.Length == 1), CancellationToken.None);
         await dispatcher2.Received(1)
-            .Dispatch(Arg.Is<IDomainEvent[]>(e => e.Length == 1), context.RequestAborted);
+            .Dispatch(Arg.Is<IDomainEvent[]>(e => e.Length == 1), CancellationToken.None);
     }
 
     [Fact]
@@ -60,21 +61,22 @@ public class DomainEventDispatcherMiddlewareTests
         await dispatcher.Received(1)
             .Dispatch(Arg.Is<IDomainEvent[]>(e =>
                 e.Length == 1 && ((TestEvent)e[0]).Value == "inner"),
-                context.RequestAborted);
+                CancellationToken.None);
 
         // Outer scope should still have its event
         Whispers.GetAndClearEvents().Should().HaveCount(1);
     }
 
     [Fact]
-    public async Task InvokeAsync_UsesRequestAbortedToken()
+    public async Task InvokeAsync_RequestAbortedAfterEndpointRan_DispatchesWithoutCancellation()
     {
-        var cts = new CancellationTokenSource();
+        using var requestAbortedCts = new CancellationTokenSource();
         var dispatcher = Substitute.For<IDispatchDomainEvents>();
-        var context = new DefaultHttpContext { RequestAborted = cts.Token };
+        var context = new DefaultHttpContext { RequestAborted = requestAbortedCts.Token };
         RequestDelegate next = _ =>
         {
             Whispers.About(new TestEvent("test"));
+            requestAbortedCts.Cancel(); // the client disconnects once the endpoint has saved its changes
             return Task.CompletedTask;
         };
         var sut = new DomainEventDispatcherMiddleware(next);
@@ -82,7 +84,27 @@ public class DomainEventDispatcherMiddlewareTests
         await sut.InvokeAsync(context, [dispatcher]);
 
         await dispatcher.Received(1)
-            .Dispatch(Arg.Any<IDomainEvent[]>(), cts.Token);
+            .Dispatch(Arg.Any<IDomainEvent[]>(), Arg.Is<CancellationToken>(t => !t.IsCancellationRequested));
+    }
+
+    [Fact]
+    public async Task InvokeAsync_WithApplicationLifetime_DispatchesWithApplicationStoppingToken()
+    {
+        using var stoppingCts = new CancellationTokenSource();
+        var applicationLifetime = Substitute.For<IHostApplicationLifetime>();
+        applicationLifetime.ApplicationStopping.Returns(stoppingCts.Token);
+        var dispatcher = Substitute.For<IDispatchDomainEvents>();
+        var context = new DefaultHttpContext();
+        RequestDelegate next = _ =>
+        {
+            Whispers.About(new TestEvent("test"));
+            return Task.CompletedTask;
+        };
+        var sut = new DomainEventDispatcherMiddleware(next, applicationLifetime);
+
+        await sut.InvokeAsync(context, [dispatcher]);
+
+        await dispatcher.Received(1).Dispatch(Arg.Any<IDomainEvent[]>(), stoppingCts.Token);
     }
 
     private sealed record TestEvent(string Value) : IDomainEvent;

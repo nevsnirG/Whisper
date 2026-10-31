@@ -30,7 +30,13 @@ INSERT INTO {QualifiedTableName()}
 VALUES (@Id, @EnqueuedAtUtc, @AssemblyQualifiedType, @Payload);";
 
         await using var leaseScope = await AcquireLease(cancellationToken);
-        using var cmd = new SqlCommand(sql, leaseScope.Connection, leaseScope.Transaction);
+        // On its own connection Whisper inserts the batch in a local transaction, so the batch is saved
+        // entirely or not at all. A connection enlisted in an ambient TransactionScope is already atomic
+        // (and cannot start a local transaction); a leased connection follows the host's transaction.
+        await using var ownTransaction = leaseScope.OwnsConnection && System.Transactions.Transaction.Current is null
+            ? (SqlTransaction)await leaseScope.Connection.BeginTransactionAsync(cancellationToken)
+            : null;
+        using var cmd = new SqlCommand(sql, leaseScope.Connection, ownTransaction ?? leaseScope.Transaction);
 
         var pId = cmd.Parameters.Add("@Id", SqlDbType.UniqueIdentifier);
         var pEnqueued = cmd.Parameters.Add("@EnqueuedAtUtc", SqlDbType.DateTimeOffset);
@@ -46,6 +52,9 @@ VALUES (@Id, @EnqueuedAtUtc, @AssemblyQualifiedType, @Payload);";
 
             await cmd.ExecuteNonQueryAsync(cancellationToken);
         }
+
+        if (ownTransaction is not null)
+            await ownTransaction.CommitAsync(cancellationToken);
     }
 
     public async Task<OutboxRecord[]> ReadNextBatch(int batchSize, DateTimeOffset dueAtUtc, CancellationToken cancellationToken)

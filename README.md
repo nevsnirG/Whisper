@@ -4,7 +4,7 @@ Whisper is a minimal-impact **domain event tracking** library for .NET.
 It lets rich domain models raise domain events with **no pollution** — no `Events` property on aggregates, no plumbing in entities, and no domain-level awareness of dispatching or persistence.
 
 Under the hood, Whisper uses `AsyncLocal<T>` to safely track domain events across both synchronous and asynchronous execution flows.  
-Events raised during a logical operation (e.g., a MediatR request, an NServiceBus message handler, or an ASP.NET Core request) remain attached to that flow until they are dispatched or persisted by outer layers.
+Events raised during a logical operation (e.g., a MediatR request or an ASP.NET Core request) remain attached to that flow until they are dispatched or persisted by outer layers. For other flows, such as an NServiceBus message handler, you create the scope and dispatch yourself (see [Core usage](#core-usage)) — the NServiceBus packages only share the storage session with the outbox.
 
 Whisper integrates cleanly with **DDD** and **Clean Architecture** by keeping the **domain pure** and moving event handling to the **application** and **infrastructure** layers.  
 It also provides an optional **outbox** with **MongoDB** and **SQL Server** support, plus drop-in packages for **MediatR** and integration with **NServiceBus** unit of work.
@@ -117,6 +117,17 @@ When you call `b.AddMediatR()` inside the Whisper builder, Whisper registers:
 - An `IDispatchDomainEvents` implementation that publishes via `IMediator`.
 - A **MediatR pipeline behavior** that **automatically retrieves and dispatches** all raised domain events after each request.
 
+Whisper.MediatR works with MediatR 12.0.1 and later, including 12.5+ and 13.x, so you are not forced to upgrade MediatR to use it. Events raised by a handler are published one at a time, in the order they were raised.
+
+MediatR only publishes notifications, so every domain event dispatched through MediatR must also implement `MediatR.INotification` — otherwise `IMediator.Publish` throws an `ArgumentException` at dispatch time. This also applies to events the outbox worker dispatches through MediatR.
+
+```csharp
+using MediatR;
+using Whisper;
+
+public sealed record OrderApproved(Guid OrderId) : IDomainEvent, INotification;
+```
+
 ```csharp
 using Whisper.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
@@ -204,7 +215,7 @@ using MongoDB.Driver;
 
 public interface IMongoSessionProvider
 {
-    public bool IsInTransaction => Session is not null;
+    public bool IsInTransaction => Session is { IsInTransaction: true };
 
     IClientSessionHandle? Session { get; }
 }
@@ -401,12 +412,14 @@ b.AddOutbox(ob =>
     {
         w.BatchSize              = 10;   // default
         w.PollingIntervalMs      = 1000; // default
-        w.UsePollingTimeProvider = false; // default — polling waits in real time
+        w.UsePollingTimeProvider = true; // default — the polling delay follows the registered TimeProvider
     });
 });
 ```
 
-> **Polling clock:** polling waits in real time by default — a globally registered fake `TimeProvider` does **not** freeze polling unless you opt in via `w.UsePollingTimeProvider = true` (drives the polling delay from the registered `TimeProvider`), but it **does** drive all timestamps and retry due-times. `AddOutbox` registers `TimeProvider.System` with `TryAddSingleton`, so a host-registered `TimeProvider` is never overridden.
+`BatchSize` and `PollingIntervalMs` must be greater than 0; invalid values fail options validation at host startup.
+
+> **Polling clock:** by default the polling delay is driven by the registered `TimeProvider`, so a globally registered fake `TimeProvider` (e.g. `FakeTimeProvider`) **freezes polling** until you advance it. Set `w.UsePollingTimeProvider = false` to make polling wait in real time while the registered `TimeProvider` still drives all timestamps and retry due-times. `AddOutbox` registers `TimeProvider.System` with `TryAddSingleton`, so a host-registered `TimeProvider` is never overridden.
 
 The worker reads records that are **due**: not dispatched, not failed, and `NextRetryAtUtc` null or at/before now — ordered by `NextRetryAtUtc` ascending (nulls first), then `Id` ascending. With no retry delay configured this is identical to plain `Id` order. Per record in a batch:
 
