@@ -34,6 +34,7 @@ public static class IWhisperBuilderExtensions
         whisperBuilder.Services.AddOptions<OutboxWorkerOptions>()
             .Validate(o => o.BatchSize > 0, $"{nameof(OutboxWorkerOptions)}.{nameof(OutboxWorkerOptions.BatchSize)} must be greater than 0.")
             .Validate(o => o.PollingIntervalMs >= 0, $"{nameof(OutboxWorkerOptions)}.{nameof(OutboxWorkerOptions.PollingIntervalMs)} must not be negative.")
+            .Validate(o => o.RetainDispatchedFor is null || o.RetainDispatchedFor > TimeSpan.Zero, $"{nameof(OutboxWorkerOptions)}.{nameof(OutboxWorkerOptions.RetainDispatchedFor)} must be positive when set.")
             .ValidateOnStart();
         configure?.Invoke(new OutboxBuilder(whisperBuilder.Services));
         return whisperBuilder;

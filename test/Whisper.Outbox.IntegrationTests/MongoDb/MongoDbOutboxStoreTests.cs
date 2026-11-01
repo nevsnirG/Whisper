@@ -184,6 +184,51 @@ public sealed class MongoDbOutboxStoreTests : IAsyncLifetime
         batch.Should().HaveCount(2);
     }
 
+    // Also guards the filter: DispatchedAtUtc uses the driver's default DateTimeOffset representation (a document),
+    // which $lt must still compare in time order.
+    [Fact]
+    public async Task DeleteDispatchedBefore_DeletesOnlyRecordsDispatchedBeforeTheCutoff()
+    {
+        var cutoff = BaseTime;
+        var dispatchedBefore = NewRecord();
+        var dispatchedAtCutoff = NewRecord();
+        var dispatchedAfter = NewRecord();
+        var pending = NewRecord();
+        var failed = NewRecord();
+        using var scope = _provider.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
+        await store.Add(new[] { dispatchedBefore, dispatchedAtCutoff, dispatchedAfter, pending, failed }, CancellationToken.None);
+        await store.SetDispatchedAt(dispatchedBefore, cutoff.AddDays(-1), CancellationToken.None);
+        await store.SetDispatchedAt(dispatchedAtCutoff, cutoff, CancellationToken.None);
+        await store.SetDispatchedAt(dispatchedAfter, cutoff.AddMinutes(1), CancellationToken.None);
+        await store.SetFailedAt(failed, new OutboxFailure("broken", cutoff.AddDays(-30)), CancellationToken.None);
+
+        var deleted = await store.DeleteDispatchedBefore(cutoff, 10, CancellationToken.None);
+
+        deleted.Should().Be(1);
+        var remaining = await _typedCollection.Find(FilterDefinition<OutboxRecord>.Empty).Project(x => x.Id).ToListAsync();
+        remaining.Should().BeEquivalentTo(new[] { dispatchedAtCutoff.Id, dispatchedAfter.Id, pending.Id, failed.Id });
+    }
+
+    [Fact]
+    public async Task DeleteDispatchedBefore_DeletesAtMostMaxRecordsPerCall()
+    {
+        var cutoff = BaseTime;
+        var records = new[] { NewRecord(), NewRecord(), NewRecord() };
+        using var scope = _provider.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
+        await store.Add(records, CancellationToken.None);
+        foreach (var record in records)
+            await store.SetDispatchedAt(record, cutoff.AddHours(-1), CancellationToken.None);
+
+        var first = await store.DeleteDispatchedBefore(cutoff, 2, CancellationToken.None);
+        var second = await store.DeleteDispatchedBefore(cutoff, 2, CancellationToken.None);
+        var third = await store.DeleteDispatchedBefore(cutoff, 2, CancellationToken.None);
+
+        (first, second, third).Should().Be((2, 1, 0));
+        (await _typedCollection.CountDocumentsAsync(FilterDefinition<OutboxRecord>.Empty)).Should().Be(0);
+    }
+
     private static OutboxRecord NewRecord(Guid? id = null) => new()
     {
         Id = id ?? Guid.NewGuid(),

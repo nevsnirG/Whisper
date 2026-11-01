@@ -92,6 +92,25 @@ public class DomainEventCaptureBehaviorTests
         await dispatcher.Received(1).Dispatch(Arg.Any<IDomainEvent[]>(), CancellationToken.None);
     }
 
+#if MEDIATR_NEXT_TAKES_CANCELLATION_TOKEN
+    // Only meaningful where RequestHandlerDelegate takes a token (MediatR 12.5+); the CI matrix runs it there.
+    [Fact]
+    public async Task Handle_PassesItsCancellationTokenToNext()
+    {
+        using var cts = new CancellationTokenSource();
+        CancellationToken received = default;
+        var sut = new DomainEventCaptureBehavior<TestRequest, string>([]);
+
+        await sut.Handle(new TestRequest(), t =>
+        {
+            received = t;
+            return Task.FromResult("response");
+        }, cts.Token);
+
+        received.Should().Be(cts.Token);
+    }
+#endif
+
     private record TestRequest : IRequest<string>;
     private record TestEvent(string Value) : IDomainEvent;
 }

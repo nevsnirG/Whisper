@@ -81,6 +81,48 @@ public sealed class SqlOutboxStoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DeleteDispatchedBefore_DeletesOnlyRecordsDispatchedBeforeTheCutoff()
+    {
+        var cutoff = DateTimeOffset.UtcNow.AddDays(-7);
+        var dispatchedBefore = NewRecord();
+        var dispatchedAtCutoff = NewRecord();
+        var dispatchedAfter = NewRecord();
+        var pending = NewRecord();
+        var failed = NewRecord();
+        using var scope = _provider.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
+        await store.Add(new[] { dispatchedBefore, dispatchedAtCutoff, dispatchedAfter, pending, failed }, CancellationToken.None);
+        await store.SetDispatchedAt(dispatchedBefore, cutoff.AddDays(-1), CancellationToken.None);
+        await store.SetDispatchedAt(dispatchedAtCutoff, cutoff, CancellationToken.None);
+        await store.SetDispatchedAt(dispatchedAfter, cutoff.AddMinutes(1), CancellationToken.None);
+        await store.SetFailedAt(failed, new OutboxFailure("broken", cutoff.AddDays(-30)), CancellationToken.None);
+
+        var deleted = await store.DeleteDispatchedBefore(cutoff, 10, CancellationToken.None);
+
+        deleted.Should().Be(1);
+        (await ReadAllIds()).Should().BeEquivalentTo(new[] { dispatchedAtCutoff.Id, dispatchedAfter.Id, pending.Id, failed.Id });
+    }
+
+    [Fact]
+    public async Task DeleteDispatchedBefore_DeletesAtMostMaxRecordsPerCall()
+    {
+        var cutoff = DateTimeOffset.UtcNow;
+        var records = new[] { NewRecord(), NewRecord(), NewRecord() };
+        using var scope = _provider.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
+        await store.Add(records, CancellationToken.None);
+        foreach (var record in records)
+            await store.SetDispatchedAt(record, cutoff.AddHours(-1), CancellationToken.None);
+
+        var first = await store.DeleteDispatchedBefore(cutoff, 2, CancellationToken.None);
+        var second = await store.DeleteDispatchedBefore(cutoff, 2, CancellationToken.None);
+        var third = await store.DeleteDispatchedBefore(cutoff, 2, CancellationToken.None);
+
+        (first, second, third).Should().Be((2, 1, 0));
+        (await ReadAllIds()).Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task Add_MultipleRecords_WhenAnInsertFails_PersistsNoneOfThem()
     {
         var duplicateId = Guid.NewGuid();
@@ -260,6 +302,19 @@ public sealed class SqlOutboxStoreTests : IAsyncLifetime
         AssemblyQualifiedType = type.AssemblyQualifiedName!,
         Payload = payload,
     };
+
+    private async Task<Guid[]> ReadAllIds()
+    {
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT Id FROM [dbo].[outboxrecords]";
+        await using var reader = await command.ExecuteReaderAsync();
+        var ids = new List<Guid>();
+        while (await reader.ReadAsync())
+            ids.Add(reader.GetGuid(0));
+        return [.. ids];
+    }
 
     private async Task<OutboxRow> ReadRow(Guid id)
     {

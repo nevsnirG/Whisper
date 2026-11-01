@@ -51,7 +51,7 @@ public class WhispersTests
     }
 
     [Fact(DisplayName = "Domain events raised inside of a nested scope are not accessible in the parent scope.")]
-    public void DomainEventsRaisedInNestedScopesAreAccessibleInTheParentScope()
+    public void DomainEventsRaisedInNestedScopesAreNotAccessibleInTheParentScope()
     {
         using (var scope = Whispers.CreateScope())
         {
@@ -84,8 +84,8 @@ public class WhispersTests
         Whispers.Peek().Should().BeEmpty();
     }
 
-    [Fact(DisplayName = "A higher scope disposed in a deeper scope will cascade disposing of all deeper scopes.")]
-    public void DisposingAHigherScopeInADeeperScopeDisposesAllDeeperScope()
+    [Fact(DisplayName = "Disposing an outer scope while deeper scopes are open restores the collector that was active when it was created.")]
+    public void DisposingAnOuterScopeRestoresTheCollectorActiveWhenItWasCreated()
     {
         using var topScope = Whispers.CreateScope();
         Whispers.About(new TestEvent("I was raised in the top scope."));

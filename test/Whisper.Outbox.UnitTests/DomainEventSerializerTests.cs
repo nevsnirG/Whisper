@@ -73,7 +73,123 @@ public class DomainEventSerializerTests
             .Which.Custom.Inner.Should().Be(123);
     }
 
+    [Fact]
+    public void RoundTrips_PublicFields()
+    {
+        var original = new EventWithFields { OrderId = Guid.NewGuid(), Note = "first" };
+
+        var result = RoundTrip(original);
+
+        result.OrderId.Should().Be(original.OrderId);
+        result.Note.Should().Be("first");
+    }
+
+    [Fact]
+    public void RoundTrips_PropertiesWithPrivateAndProtectedSetters()
+    {
+        var original = EventWithNonPublicSetters.Create(Guid.NewGuid(), 7);
+
+        var result = RoundTrip(original);
+
+        result.OrderId.Should().Be(original.OrderId);
+        result.Quantity.Should().Be(7);
+    }
+
+    [Fact]
+    public void RoundTrips_PrivateSetterDeclaredInBaseClass()
+    {
+        var original = DerivedEvent.Create(Guid.NewGuid(), "derived");
+
+        var result = RoundTrip(original);
+
+        result.AggregateId.Should().Be(original.AggregateId);
+        result.Name.Should().Be("derived");
+    }
+
+    [Fact]
+    public void RoundTrips_ConstructorParameterWithPrivateSetter()
+    {
+        var original = new EventWithConstructor(Guid.NewGuid());
+
+        var result = RoundTrip(original);
+
+        result.OrderId.Should().Be(original.OrderId);
+    }
+
+    [Fact]
+    public void RoundTrips_InitOnlyProperties()
+    {
+        var original = new EventWithInit { OrderId = Guid.NewGuid() };
+
+        var result = RoundTrip(original);
+
+        result.OrderId.Should().Be(original.OrderId);
+    }
+
+    [Fact]
+    public void SerializerOptions_AreUsedForSerialization()
+    {
+        var sut = CreateSerializer(o => o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase);
+        var original = new TestEvent("camel", 1);
+
+        var json = sut.Serialize(original);
+        var result = sut.Deserialize(json, typeof(TestEvent).AssemblyQualifiedName!);
+
+        json.Should().Contain("\"value\":\"camel\"");
+        result.Should().BeEquivalentTo(original);
+    }
+
+    private static T RoundTrip<T>(T domainEvent) where T : IDomainEvent
+    {
+        var sut = CreateSerializer();
+        var json = sut.Serialize(domainEvent);
+        return sut.Deserialize(json, typeof(T).AssemblyQualifiedName!).Should().BeOfType<T>().Subject;
+    }
+
     internal record TestEvent(string Value, int Number) : IDomainEvent;
+
+    internal sealed class EventWithFields : IDomainEvent
+    {
+        public Guid OrderId;
+        public string? Note;
+    }
+
+    internal class EventWithNonPublicSetters : IDomainEvent
+    {
+        public Guid OrderId { get; private set; }
+        public int Quantity { get; protected set; }
+
+        public static EventWithNonPublicSetters Create(Guid orderId, int quantity) => new() { OrderId = orderId, Quantity = quantity };
+    }
+
+    internal abstract class AggregateEvent : IDomainEvent
+    {
+        public Guid AggregateId { get; private set; }
+
+        protected void SetAggregateId(Guid aggregateId) => AggregateId = aggregateId;
+    }
+
+    internal sealed class DerivedEvent : AggregateEvent
+    {
+        public string Name { get; private set; } = "";
+
+        public static DerivedEvent Create(Guid aggregateId, string name)
+        {
+            var domainEvent = new DerivedEvent { Name = name };
+            domainEvent.SetAggregateId(aggregateId);
+            return domainEvent;
+        }
+    }
+
+    internal sealed class EventWithConstructor(Guid orderId) : IDomainEvent
+    {
+        public Guid OrderId { get; private set; } = orderId;
+    }
+
+    internal sealed class EventWithInit : IDomainEvent
+    {
+        public Guid OrderId { get; init; }
+    }
 
     internal class NotADomainEvent { }
 

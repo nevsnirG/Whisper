@@ -24,9 +24,12 @@ public static class IOutboxBuilderExtensions
             .AddScoped<IOutboxStore>(static sp => new MongoDbOutboxStore(sp.GetOutboxCollection(), sp.GetService<IMongoSessionProvider>()))
             .AddSingleton<IOutboxManagementStore>(static sp => new MongoDbOutboxManagementStore(sp.GetOutboxCollection()))
             .AddSingleton(mongoDbOutboxConfiguration)
-            .AddSingleton(sp => new MongoClient(sp.GetRequiredService<MongoDbOutboxConfiguration>().ConnectionString))
+            .AddSingleton(static sp => new OutboxMongoClient(new MongoClient(sp.GetRequiredService<MongoDbOutboxConfiguration>().ConnectionString)))
             .AddTransient<IInstallOutbox, MongoDbOutboxInstaller>()
             ;
+        // Only for hosts that resolved Whisper's client as MongoClient before 4.2.0; Whisper itself never uses this
+        // registration. TryAdd, so a MongoClient the host registered first is left alone.
+        outboxBuilder.Services.TryAddSingleton(static sp => sp.GetRequiredService<OutboxMongoClient>().Client);
         return outboxBuilder;
     }
 
@@ -85,7 +88,7 @@ public static class IOutboxBuilderExtensions
 
     private static IMongoCollection<OutboxRecord> GetOutboxCollection(this IServiceProvider serviceProvider)
     {
-        var mongoClient = serviceProvider.GetRequiredService<MongoClient>();
+        var mongoClient = serviceProvider.GetRequiredService<OutboxMongoClient>().Client;
         var configuration = serviceProvider.GetRequiredService<MongoDbOutboxConfiguration>();
         var database = mongoClient.GetDatabase(configuration.DatabaseName);
         return database.GetCollection<OutboxRecord>(configuration.CollectionName);
@@ -98,8 +101,8 @@ public static class IOutboxBuilderExtensions
             cm.AutoMap();
             cm.MapIdMember(u => u.Id)
                 .SetSerializer(new GuidSerializer(GuidRepresentation.Standard));
-            // BsonType.DateTime is mandatory here: the driver's default DateTimeOffset (array)
-            // representation breaks $lte filters and sorts on these members.
+            // BsonType.DateTime is mandatory here: $lte filters and sorts on these members need plain BSON dates,
+            // not the driver's default DateTimeOffset representation (a {DateTime, Ticks, Offset} document).
             cm.MapMember(u => u.NextRetryAtUtc)
                 .SetSerializer(new NullableSerializer<DateTimeOffset>(new DateTimeOffsetSerializer(BsonType.DateTime)));
             cm.MapMember(u => u.LastErrorAtUtc)

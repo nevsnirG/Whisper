@@ -23,6 +23,39 @@ public class MongoDbOutboxBuilderExtensionsTests
         scope.ServiceProvider.GetService<IMongoSessionProvider>().Should().BeNull();
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AddMongoDb_WithHostMongoClient_HostKeepsItsClientAndOutboxUsesItsOwn(bool hostRegistersFirst)
+    {
+        var hostClient = new MongoClient("mongodb://host-cluster:27017");
+        var outboxConfiguration = new MongoDbOutboxConfiguration
+        {
+            ConnectionString = "mongodb://outbox-cluster:27017",
+            DatabaseName = "test",
+        };
+        var services = new ServiceCollection() as IServiceCollection;
+        services.AddOptions();
+        if (hostRegistersFirst)
+            services.AddSingleton(hostClient);
+        services.AddWhisper(b => b.AddOutbox(o => o.AddMongoDb(outboxConfiguration)));
+        if (!hostRegistersFirst)
+            services.AddSingleton(hostClient);
+        using var serviceProvider = services.BuildServiceProvider();
+
+        serviceProvider.GetRequiredService<MongoClient>().Should().BeSameAs(hostClient);
+        serviceProvider.GetRequiredService<OutboxMongoClient>().Client.Settings.Server.Host.Should().Be("outbox-cluster");
+    }
+
+    [Fact]
+    public void AddMongoDb_WithoutHostMongoClient_StillResolvesTheOutboxClientAsMongoClient()
+    {
+        using var serviceProvider = BuildServiceProvider(o => o.AddMongoDb(Configuration));
+
+        serviceProvider.GetRequiredService<MongoClient>()
+            .Should().BeSameAs(serviceProvider.GetRequiredService<OutboxMongoClient>().Client);
+    }
+
     [Fact]
     public void AddMongoDb_ResolvesMongoDbOutboxStore()
     {

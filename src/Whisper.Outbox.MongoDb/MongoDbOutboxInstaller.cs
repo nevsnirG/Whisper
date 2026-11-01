@@ -2,11 +2,11 @@ using MongoDB.Driver;
 using Whisper.Outbox.Abstractions;
 
 namespace Whisper.Outbox.MongoDb;
-internal sealed class MongoDbOutboxInstaller(MongoDbOutboxConfiguration mongoDbOutboxConfiguration, MongoClient mongoClient) : IInstallOutbox
+internal sealed class MongoDbOutboxInstaller(MongoDbOutboxConfiguration mongoDbOutboxConfiguration, OutboxMongoClient outboxMongoClient) : IInstallOutbox
 {
     public async Task InstallCollection(CancellationToken cancellationToken)
     {
-        var database = mongoClient.GetDatabase(mongoDbOutboxConfiguration.DatabaseName);
+        var database = outboxMongoClient.Client.GetDatabase(mongoDbOutboxConfiguration.DatabaseName);
         var outboxCollection = database.GetCollection<OutboxRecord>(mongoDbOutboxConfiguration.CollectionName);
 
         await DropLegacyIndex(outboxCollection, cancellationToken);

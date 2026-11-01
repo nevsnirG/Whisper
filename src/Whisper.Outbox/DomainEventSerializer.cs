@@ -11,7 +11,7 @@ internal interface IDomainEventSerializer
 
 internal sealed class DomainEventSerializer(IOptions<OutboxJsonOptions> outboxJsonOptions) : IDomainEventSerializer
 {
-    private readonly JsonSerializerOptions _jsonSerializerOptions = BuildOptions(outboxJsonOptions.Value);
+    private readonly JsonSerializerOptions _jsonSerializerOptions = outboxJsonOptions.Value.SerializerOptions;
 
     public string Serialize(IDomainEvent domainEvent)
     {
@@ -28,15 +28,5 @@ internal sealed class DomainEventSerializer(IOptions<OutboxJsonOptions> outboxJs
         }
 
         return (JsonSerializer.Deserialize(json, type, _jsonSerializerOptions) as IDomainEvent)!;
-    }
-
-    private static JsonSerializerOptions BuildOptions(OutboxJsonOptions options)
-    {
-        var jsonOptions = new JsonSerializerOptions { WriteIndented = false };
-        foreach (var converter in options.Converters)
-        {
-            jsonOptions.Converters.Add(converter);
-        }
-        return jsonOptions;
     }
 }

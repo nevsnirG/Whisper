@@ -122,6 +122,20 @@ ORDER BY NextRetryAtUtc ASC, Id ASC;";
             cancellationToken);
     }
 
+    public async Task<int> DeleteDispatchedBefore(DateTimeOffset dispatchedBeforeUtc, int maxRecords, CancellationToken cancellationToken)
+    {
+        // TOP bounds the locks one statement takes, so a large cleanup never escalates to a table lock.
+        var sql = $@"
+DELETE TOP (@maxRecords) FROM {QualifiedTableName()}
+WHERE DispatchedAtUtc IS NOT NULL AND DispatchedAtUtc < @dispatchedBeforeUtc;";
+
+        await using var leaseScope = await AcquireLease(cancellationToken);
+        using var cmd = new SqlCommand(sql, leaseScope.Connection, leaseScope.Transaction);
+        cmd.Parameters.Add(new SqlParameter("@maxRecords", SqlDbType.Int) { Value = maxRecords });
+        cmd.Parameters.Add(new SqlParameter("@dispatchedBeforeUtc", SqlDbType.DateTimeOffset) { Value = dispatchedBeforeUtc });
+        return await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private static void AddFailureParameters(SqlCommand cmd, OutboxFailure failure)
     {
         cmd.Parameters.Add(new SqlParameter("@lastError", SqlDbType.NVarChar, -1) { Value = failure.Error });

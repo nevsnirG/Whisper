@@ -28,4 +28,14 @@ public interface IOutboxStore
     /// <see cref="OutboxRecord.LastError"/> and <see cref="OutboxRecord.LastErrorAtUtc"/> from <paramref name="failure"/>.
     /// </summary>
     Task SetFailedAt(OutboxRecord outboxRecord, OutboxFailure failure, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Deletes up to <paramref name="maxRecords"/> dispatched records whose <see cref="OutboxRecord.DispatchedAtUtc"/>
+    /// is before <paramref name="dispatchedBeforeUtc"/> and returns how many were deleted. Pending and failed records
+    /// are never deleted. Called by the worker when <see cref="OutboxWorkerOptions.RetainDispatchedFor"/> is set.
+    /// The default throws <see cref="NotSupportedException"/>, so stores written before this member keep compiling;
+    /// the worker then logs a warning once and stops trying.
+    /// </summary>
+    Task<int> DeleteDispatchedBefore(DateTimeOffset dispatchedBeforeUtc, int maxRecords, CancellationToken cancellationToken)
+        => throw new NotSupportedException($"{GetType().Name} does not support deleting dispatched outbox records.");
 }

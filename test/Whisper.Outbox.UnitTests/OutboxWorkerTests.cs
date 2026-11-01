@@ -69,6 +69,26 @@ public class OutboxWorkerTests
     }
 
     [Fact]
+    public async Task WhenMarkingDispatchedFails_BooksNoFailedAttempt_AndEndsTheBatch()
+    {
+        using var harness = new WorkerHarness();
+        var firstRecord = CreateRecord(payload: "FirstPayload");
+        var secondRecord = CreateRecord(payload: "SecondPayload");
+        harness.RecoverabilityOptions.MaxRetries = 1; // a booked failure would fail the record permanently
+        harness.Serializer.Deserialize(Arg.Any<string>(), Arg.Any<string>()).Returns(new TestEvent());
+        harness.OutboxStore.SetDispatchedAt(firstRecord, Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException(new TimeoutException("store unavailable")));
+        harness.ReturnBatchOnceThenCancel(firstRecord, secondRecord);
+
+        await harness.RunToCompletion();
+
+        await harness.Dispatcher.Received(1).Dispatch(Arg.Any<IDomainEvent>(), Arg.Any<CancellationToken>());
+        await harness.OutboxStore.DidNotReceiveWithAnyArgs().ScheduleRetry(default!, default!, default, default);
+        await harness.OutboxStore.DidNotReceiveWithAnyArgs().SetFailedAt(default!, default!, default);
+        await harness.OutboxStore.DidNotReceive().SetDispatchedAt(secondRecord, Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task WhenDeserializationFails_MarksRecordAsFailedWithError_AndContinuesWithNextRecord()
     {
         using var harness = new WorkerHarness();
@@ -257,6 +277,101 @@ public class OutboxWorkerTests
         await harness.OutboxStore.Received(2).ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task WhenRetentionNotSet_NeverDeletesDispatchedRecords()
+    {
+        using var harness = new WorkerHarness();
+        harness.PollThenCancel(polls: 3, advancePerPoll: TimeSpan.FromMinutes(2));
+
+        await harness.RunToCompletion();
+
+        await harness.OutboxStore.DidNotReceiveWithAnyArgs().DeleteDispatchedBefore(default, default, default);
+    }
+
+    [Fact]
+    public async Task WhenRetentionSet_DeletesRecordsDispatchedBeforeNowMinusRetention()
+    {
+        using var harness = new WorkerHarness();
+        harness.WorkerOptions.RetainDispatchedFor = TimeSpan.FromDays(7);
+        harness.PollThenCancel(polls: 2);
+
+        await harness.RunToCompletion();
+
+        await harness.OutboxStore.Received(1).DeleteDispatchedBefore(
+            StartTime - TimeSpan.FromDays(7), OutboxWorker.RetentionBatchSize, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task WhenRetentionDeletesFullBatches_ContinuesUntilABatchIsNotFull()
+    {
+        using var harness = new WorkerHarness();
+        harness.WorkerOptions.RetainDispatchedFor = TimeSpan.FromDays(7);
+        harness.OutboxStore.DeleteDispatchedBefore(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(OutboxWorker.RetentionBatchSize, OutboxWorker.RetentionBatchSize, 3);
+        harness.PollThenCancel(polls: 2);
+
+        await harness.RunToCompletion();
+
+        await harness.OutboxStore.Received(3).DeleteDispatchedBefore(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task WhenRetentionKeepsDeletingFullBatches_StopsAtTheLimitPerRun()
+    {
+        using var harness = new WorkerHarness();
+        harness.WorkerOptions.RetainDispatchedFor = TimeSpan.FromDays(7);
+        harness.OutboxStore.DeleteDispatchedBefore(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(OutboxWorker.RetentionBatchSize);
+        harness.PollThenCancel(polls: 2);
+
+        await harness.RunToCompletion();
+
+        await harness.OutboxStore.Received(OutboxWorker.MaxRetentionBatchesPerRun)
+            .DeleteDispatchedBefore(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task WhenPollsComeFasterThanTheRetentionInterval_CleansUpOncePerInterval()
+    {
+        using var harness = new WorkerHarness();
+        harness.WorkerOptions.RetainDispatchedFor = TimeSpan.FromDays(7);
+        harness.PollThenCancel(polls: 4); // the fake clock does not move between polls
+
+        await harness.RunToCompletion();
+
+        await harness.OutboxStore.Received(1).DeleteDispatchedBefore(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task WhenStoreDoesNotSupportRetention_StopsTrying()
+    {
+        using var harness = new WorkerHarness();
+        harness.WorkerOptions.RetainDispatchedFor = TimeSpan.FromDays(7);
+        harness.OutboxStore.DeleteDispatchedBefore(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns<Task<int>>(_ => throw new NotSupportedException());
+        harness.PollThenCancel(polls: 4, advancePerPoll: TimeSpan.FromMinutes(2));
+
+        await harness.RunToCompletion();
+
+        await harness.OutboxStore.Received(1).DeleteDispatchedBefore(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task WhenRetentionFails_TriesAgainAtTheNextCleanup_AndKeepsPolling()
+    {
+        using var harness = new WorkerHarness();
+        harness.WorkerOptions.RetainDispatchedFor = TimeSpan.FromDays(7);
+        harness.OutboxStore.DeleteDispatchedBefore(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException<int>(new TimeoutException("store unavailable")));
+        harness.PollThenCancel(polls: 3, advancePerPoll: TimeSpan.FromMinutes(2));
+
+        await harness.RunToCompletion();
+
+        await harness.OutboxStore.Received(3).ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
+        // Cleanup runs after the polls that did not stop the worker.
+        await harness.OutboxStore.Received(2).DeleteDispatchedBefore(Arg.Any<DateTimeOffset>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
     private static OutboxRecord CreateRecord(int retries = 0, string payload = "SomePayload", string type = "SomeType") => new()
     {
         Id = Guid.NewGuid(),
@@ -286,6 +401,23 @@ public class OutboxWorkerTests
             OutboxStore.ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>())
                 .Returns(records)
                 .AndDoes(_ => _cts.Cancel());
+        }
+
+        // Polls an empty outbox `polls` times in real time, moving the fake clock by `advancePerPoll` on each read,
+        // and stops the worker during the last read.
+        public void PollThenCancel(int polls, TimeSpan advancePerPoll = default)
+        {
+            WorkerOptions.UsePollingTimeProvider = false;
+            WorkerOptions.PollingIntervalMs = 1;
+            var reads = 0;
+            OutboxStore.ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>())
+                .Returns(_ =>
+                {
+                    TimeProvider.Advance(advancePerPoll);
+                    if (++reads == polls)
+                        _cts.Cancel();
+                    return Array.Empty<OutboxRecord>();
+                });
         }
 
         public void SetUpFailingDispatch(OutboxRecord outboxRecord, Exception dispatchException)

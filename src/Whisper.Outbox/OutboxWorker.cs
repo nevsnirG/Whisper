@@ -17,10 +17,16 @@ internal sealed class OutboxWorker(IDomainEventSerializer domainEventSerializer,
                                    ILogger<OutboxWorker> logger) : BackgroundService
 {
     internal const int MaxErrorLength = 32_768;
+    internal const int RetentionBatchSize = 1_000;
+    // Bounds one cleanup run, so a large backlog is worked off over several runs instead of delaying dispatch.
+    internal const int MaxRetentionBatchesPerRun = 10;
+    internal static readonly TimeSpan RetentionInterval = TimeSpan.FromMinutes(1);
 
     private readonly OutboxWorkerOptions _outboxWorkerOptions = outboxWorkerOptions.Value;
     private readonly OutboxRecoverabilityOptions _recoverabilityOptions = outboxRecoverabilityOptions.Value;
     private readonly RecoverabilityPolicy _recoverabilityPolicy = new(outboxRecoverabilityOptions.Value, logger);
+    private DateTimeOffset _nextRetentionRunAtUtc = DateTimeOffset.MinValue;
+    private bool _retentionUnsupported;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -44,7 +50,50 @@ internal sealed class OutboxWorker(IDomainEventSerializer domainEventSerializer,
                 logger.LogError(ex, "An error occurred while processing the outbox batch.");
             }
 
+            await DeleteExpiredDispatchedRecordsWhenDue(stoppingToken);
             await Delay(stoppingToken);
+        }
+    }
+
+    private async Task DeleteExpiredDispatchedRecordsWhenDue(CancellationToken stoppingToken)
+    {
+        if (_outboxWorkerOptions.RetainDispatchedFor is not { } retention || _retentionUnsupported || stoppingToken.IsCancellationRequested)
+            return;
+
+        var now = timeProvider.GetUtcNow();
+        if (now < _nextRetentionRunAtUtc)
+            return;
+        _nextRetentionRunAtUtc = now + RetentionInterval;
+
+        // A retention reaching back past DateTimeOffset.MinValue keeps everything.
+        if (retention >= now - DateTimeOffset.MinValue)
+            return;
+        var dispatchedBeforeUtc = now - retention;
+
+        try
+        {
+            using var scope = serviceScopeFactory.CreateScope();
+            var outboxStore = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
+            for (var batch = 0; batch < MaxRetentionBatchesPerRun; batch++)
+            {
+                var deleted = await outboxStore.DeleteDispatchedBefore(dispatchedBeforeUtc, RetentionBatchSize, stoppingToken);
+                if (deleted < RetentionBatchSize)
+                    break;
+            }
+        }
+        catch (NotSupportedException ex)
+        {
+            _retentionUnsupported = true;
+            logger.LogWarning(ex, "The registered outbox store cannot delete dispatched records, so {Option} is ignored.",
+                nameof(OutboxWorkerOptions.RetainDispatchedFor));
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Deleting dispatched outbox records older than {DispatchedBeforeUtc} failed; trying again at the next cleanup.",
+                dispatchedBeforeUtc);
         }
     }
 
@@ -86,14 +135,18 @@ internal sealed class OutboxWorker(IDomainEventSerializer domainEventSerializer,
         try
         {
             await DispatchToInnerDispatchers(domainEvent, cancellationToken);
-            // Not cancellable: the dispatch already happened, and a shutdown cancelling this mark
-            // would make the record dispatch again after the restart.
-            await outboxStore.SetDispatchedAt(outboxRecord, timeProvider.GetUtcNow(), CancellationToken.None);
         }
         catch (Exception ex)
         {
             await HandleDispatchFailure(outboxStore, outboxRecord, ex, cancellationToken);
+            return;
         }
+
+        // Outside the try above: the dispatch succeeded, so failing to record it is a storage problem, not a failed
+        // attempt. The exception ends the batch (the store is likely unavailable for the next records too) and the
+        // record is dispatched again on a later poll. Not cancellable: a shutdown cancelling this mark would also
+        // make the record dispatch again after the restart.
+        await outboxStore.SetDispatchedAt(outboxRecord, timeProvider.GetUtcNow(), CancellationToken.None);
     }
 
     private bool TryDeserialize(OutboxRecord record, [NotNullWhen(true)] out IDomainEvent? domainEvent, [NotNullWhen(false)] out Exception? error)

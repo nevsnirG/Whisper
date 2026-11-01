@@ -71,6 +71,25 @@ internal sealed class MongoDbOutboxStore(IMongoCollection<OutboxRecord> outboxCo
             cancellationToken);
     }
 
+    public async Task<int> DeleteDispatchedBefore(DateTimeOffset dispatchedBeforeUtc, int maxRecords, CancellationToken cancellationToken)
+    {
+        // DeleteMany has no limit, so the ids are selected first to keep each round bounded.
+        var filter = Builders<OutboxRecord>.Filter.Lt(x => x.DispatchedAtUtc, (DateTimeOffset?)dispatchedBeforeUtc);
+        var session = mongoSessionProvider?.Session;
+        var find = session is not null
+            ? outboxCollection.Find(session, filter)
+            : outboxCollection.Find(filter);
+        var ids = await find.Limit(maxRecords).Project(x => x.Id).ToListAsync(cancellationToken);
+        if (ids.Count == 0)
+            return 0;
+
+        var byIds = Builders<OutboxRecord>.Filter.In(x => x.Id, ids);
+        var result = session is not null
+            ? await outboxCollection.DeleteManyAsync(session, byIds, null, cancellationToken)
+            : await outboxCollection.DeleteManyAsync(byIds, cancellationToken);
+        return (int)result.DeletedCount;
+    }
+
     private Task UpdateByIdAsync(Guid id, UpdateDefinition<OutboxRecord> update, CancellationToken cancellationToken)
     {
         var filter = Builders<OutboxRecord>.Filter.Eq(or => or.Id, id);

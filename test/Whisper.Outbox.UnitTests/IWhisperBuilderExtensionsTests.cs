@@ -1,6 +1,9 @@
 ﻿using Whisper.Abstractions;
 using Whisper.Outbox.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 
@@ -61,29 +64,51 @@ public class IWhisperBuilderExtensionsTests
         serviceProvider.GetKeyedServices<IDispatchDomainEvents>(ServiceKeys.InnerDispatcher).Should().BeEmpty();
     }
 
+    // Runs the real worker on the graph two AddOutbox calls build: the second call moves the first call's outbox
+    // dispatcher in among the inner dispatchers, which the worker must skip rather than write the event back.
     [Fact]
-    public void AddOutbox_CalledTwiceAfterAnotherDispatcher_KeepsThatDispatcherAsSingleInnerDispatcher()
+    public async Task AddOutbox_CalledTwiceAfterAnotherDispatcher_WorkerDispatchesToThatDispatcherOnce()
     {
         var serviceCollection = new ServiceCollection() as IServiceCollection;
         serviceCollection.AddOptions();
-        serviceCollection.AddSingleton(Substitute.For<IOutboxStore>());
-        var innerDispatcher = Substitute.For<IDispatchDomainEvents>();
-        serviceCollection.AddSingleton(innerDispatcher);
-
-        var act = () => serviceCollection.AddWhisper(b =>
+        serviceCollection.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
+        var outboxStore = Substitute.For<IOutboxStore>();
+        serviceCollection.AddSingleton(outboxStore);
+        serviceCollection.AddSingleton(Substitute.For<IInstallOutbox>());
+        var hostDispatcher = Substitute.For<IDispatchDomainEvents>();
+        serviceCollection.AddSingleton(hostDispatcher);
+        serviceCollection.AddWhisper(b =>
         {
             b.AddOutbox(_ => { });
             b.AddOutbox(_ => { });
         });
+        await using var serviceProvider = serviceCollection.BuildServiceProvider();
 
-        act.Should().NotThrow();
-        using var serviceProvider = serviceCollection.BuildServiceProvider();
+        var domainEvent = new WorkerTestEvent("dispatched once");
+        var record = new OutboxRecord
+        {
+            Id = Guid.NewGuid(),
+            EnqueuedAtUtc = DateTimeOffset.UtcNow,
+            AssemblyQualifiedType = typeof(WorkerTestEvent).AssemblyQualifiedName!,
+            Payload = serviceProvider.GetRequiredService<IDomainEventSerializer>().Serialize(domainEvent),
+        };
+        using var stopping = new CancellationTokenSource();
+        outboxStore.ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>())
+            .Returns([record])
+            .AndDoes(_ => stopping.Cancel());
         serviceProvider.GetRequiredService<OutboxInstallerAwaiter>().SignalCompletion();
-        // The worker skips OutboxDispatcher, so what it actually dispatches to is the host's dispatcher, once.
-        serviceProvider.GetKeyedServices<IDispatchDomainEvents>(ServiceKeys.InnerDispatcher)
-            .Where(d => d is not OutboxDispatcher)
-            .Should().ContainSingle().Which.Should().BeSameAs(innerDispatcher);
+        var worker = serviceProvider.GetServices<IHostedService>().OfType<OutboxWorker>().Single();
+
+        await worker.StartAsync(stopping.Token);
+        await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10));
+        await worker.StopAsync(CancellationToken.None);
+
+        await hostDispatcher.Received(1).Dispatch(Arg.Is<IDomainEvent>(e => e.Equals(domainEvent)), Arg.Any<CancellationToken>());
+        await outboxStore.DidNotReceive().Add(Arg.Any<OutboxRecord>(), Arg.Any<CancellationToken>());
+        await outboxStore.Received(1).SetDispatchedAt(record, Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
     }
+
+    private sealed record WorkerTestEvent(string Value) : IDomainEvent;
 
     [Fact]
     public void AddOutbox_WhenHostRegisteredTimeProvider_DoesNotOverrideIt()
@@ -157,6 +182,34 @@ public class IWhisperBuilderExtensionsTests
 
         act.Should().Throw<OptionsValidationException>()
             .Which.Message.Should().Contain(invalidOption);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void ConfigureWorker_NonPositiveRetention_FailsValidation(int retentionMinutes)
+    {
+        var serviceCollection = new ServiceCollection() as IServiceCollection;
+        serviceCollection.AddOptions();
+        serviceCollection.AddWhisper(b => b.AddOutbox(o => o.ConfigureWorker(w => w.RetainDispatchedFor = TimeSpan.FromMinutes(retentionMinutes))));
+
+        using var serviceProvider = serviceCollection.BuildServiceProvider();
+        var act = () => serviceProvider.GetRequiredService<IOptions<OutboxWorkerOptions>>().Value;
+
+        act.Should().Throw<OptionsValidationException>()
+            .Which.Message.Should().Contain(nameof(OutboxWorkerOptions.RetainDispatchedFor));
+    }
+
+    [Fact]
+    public void ConfigureWorker_PositiveRetention_PassesValidation()
+    {
+        var serviceCollection = new ServiceCollection() as IServiceCollection;
+        serviceCollection.AddOptions();
+        serviceCollection.AddWhisper(b => b.AddOutbox(o => o.ConfigureWorker(w => w.RetainDispatchedFor = TimeSpan.FromDays(7))));
+
+        using var serviceProvider = serviceCollection.BuildServiceProvider();
+
+        serviceProvider.GetRequiredService<IOptions<OutboxWorkerOptions>>().Value.RetainDispatchedFor.Should().Be(TimeSpan.FromDays(7));
     }
 
     [Fact]

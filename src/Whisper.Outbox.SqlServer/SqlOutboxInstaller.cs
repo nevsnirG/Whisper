@@ -5,9 +5,13 @@ using Whisper.Outbox.Abstractions;
 namespace Whisper.Outbox.SqlServer;
 internal sealed class SqlOutboxInstaller(SqlOutboxConfiguration sqlOutboxConfiguration) : IInstallOutbox
 {
-    // The holder runs two batches with the default 30 s command timeout each, so a waiter must be willing to
-    // wait well past 60 s or it can give up just as the holder finishes.
-    private const int InstallLockTimeoutMs = 120_000;
+    // Upgrading a large table scans it several times (CHECK validation and index builds), which can take far longer
+    // than the default 30 s; a timeout there would fail startup on every restart.
+    private const int InstallCommandTimeoutSeconds = 600;
+
+    // The holder runs two batches of up to InstallCommandTimeoutSeconds each, so a waiter must be willing to wait
+    // longer than both or it can give up just as the holder finishes.
+    private const int InstallLockTimeoutMs = (2 * InstallCommandTimeoutSeconds + 60) * 1000;
 
     // sp_getapplock resource names are limited to 255 characters.
     private const int MaxLockResourceLength = 255;
@@ -116,6 +120,7 @@ internal sealed class SqlOutboxInstaller(SqlOutboxConfiguration sqlOutboxConfigu
         ALTER TABLE {qualifiedTable} ADD NextRetryAtUtc DATETIMEOFFSET(7) NULL;
 ";
         command.Parameters.Add(new SqlParameter("@schema", SqlDbType.NVarChar, 128) { Value = rawSchemaName });
+        command.CommandTimeout = InstallCommandTimeoutSeconds;
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -205,6 +210,7 @@ internal sealed class SqlOutboxInstaller(SqlOutboxConfiguration sqlOutboxConfigu
         WHERE FailedAtUtc IS NOT NULL;
     END;
 ";
+        command.CommandTimeout = InstallCommandTimeoutSeconds;
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 }
