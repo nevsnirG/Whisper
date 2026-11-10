@@ -11,7 +11,9 @@ public interface IOutboxManagementStore
     /// <summary>
     /// Pages failed records ordered by <see cref="OutboxRecord.FailedAtUtc"/> descending.
     /// <paramref name="page"/> is 1-based (values below 1 are clamped to 1);
-    /// <paramref name="pageSize"/> is clamped to 1..200. Summaries never include the payload.
+    /// <paramref name="pageSize"/> is clamped to 1..200. Summaries never include the payload, and of
+    /// <see cref="OutboxRecord.LastError"/> only its first
+    /// <see cref="OutboxRecordSummary.LastErrorPreviewLength"/> characters.
     /// </summary>
     Task<OutboxFailedPage> GetFailed(int page, int pageSize, CancellationToken cancellationToken);
 

@@ -27,13 +27,23 @@ public class DomainEventSerializerTests
     }
 
     [Fact]
-    public void Deserialize_WithInvalidTypeName_Throws()
+    public void Deserialize_WithInvalidTypeName_ThrowsUnknownDomainEventTypeException()
     {
         var sut = CreateSerializer();
 
         var act = () => sut.Deserialize("{}", "NonExistent.Type, NonExistent.Assembly");
 
-        act.Should().Throw<Exception>();
+        act.Should().Throw<UnknownDomainEventTypeException>();
+    }
+
+    [Fact]
+    public void Deserialize_PayloadThatIsJsonNull_Throws()
+    {
+        var sut = CreateSerializer();
+
+        var act = () => sut.Deserialize("null", typeof(TestEvent).AssemblyQualifiedName!);
+
+        act.Should().Throw<JsonException>();
     }
 
     [Fact]

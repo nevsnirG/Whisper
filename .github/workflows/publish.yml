@@ -12,12 +12,24 @@ jobs:
     permissions:
       id-token: write
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
     - name: Checkout
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    # Packages are pushed with --skip-duplicate, so a package that changed without a version bump would silently
+    # never be published. Stop here instead.
+    - name: Every changed package has a new version
+      run: bash .github/scripts/check-version-bumps.sh "${{ github.event.before }}"
+    # Both stated explicitly: the SDK that builds, and the .NET 8 runtime the tests run on. Without this the job
+    # depends on what the runner image happens to ship.
     - name: Setup .NET SDK
       uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: |
+          8.0.x
+          10.0.x
     - name: Build
       run: dotnet build -c Release
     - name: Test

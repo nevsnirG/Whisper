@@ -22,9 +22,27 @@ internal static class DashboardTestHost
         IOutboxManagementStore store,
         string pattern = "/whisper/outbox",
         Action<IServiceCollection>? configureServices = null,
-        Action<WebApplication>? configurePipeline = null)
+        Action<WebApplication>? configurePipeline = null,
+        Action<WhisperOutboxDashboardOptions>? configureDashboard = null)
     {
-        return StartHost(store, pattern, options => options.AllowAnonymous = true, configureServices, configurePipeline);
+        return StartHost(
+            store,
+            pattern,
+            options =>
+            {
+                options.AllowAnonymous = true;
+                configureDashboard?.Invoke(options);
+            },
+            configureServices,
+            configurePipeline);
+    }
+
+    /// <summary>A test client that sends the command header, as the dashboard page does.</summary>
+    internal static HttpClient GetDashboardClient(this WebApplication app)
+    {
+        var client = app.GetTestClient();
+        client.DefaultRequestHeaders.Add(WhisperOutboxDashboardOptions.CommandHeader, "1");
+        return client;
     }
 
     /// <summary>Starts a host with the default secure-by-default posture (every endpoint requires authorization).</summary>

@@ -1,3 +1,4 @@
+using MongoDB.Bson;
 using MongoDB.Driver;
 using Whisper.Outbox.Abstractions;
 
@@ -16,6 +17,29 @@ internal sealed class MongoDbOutboxManagementStore(IMongoCollection<OutboxRecord
     private static readonly FilterDefinition<OutboxRecord> FailedFilter =
         Builders<OutboxRecord>.Filter.Ne(x => x.FailedAtUtc, null);
 
+    // The order of ix_outbox_failed_by_failedat_id, so a page is read straight from the index.
+    private static readonly SortDefinition<OutboxRecord> NewestFailureFirst =
+        Builders<OutboxRecord>.Sort.Descending(x => x.FailedAtUtc).Ascending(x => x.Id);
+
+    // What a summary needs and no more: no payload, and of the error only its start, cut on the server. (The server
+    // cuts it in a $project stage because a find projection can only compute fields from MongoDB 4.4 on.)
+    private static readonly BsonDocument SummaryFields = new()
+    {
+        { nameof(OutboxRecord.EnqueuedAtUtc), 1 },
+        { nameof(OutboxRecord.FailedAtUtc), 1 },
+        { nameof(OutboxRecord.Retries), 1 },
+        { nameof(OutboxRecord.AssemblyQualifiedType), 1 },
+        { nameof(OutboxRecord.LastErrorAtUtc), 1 },
+        {
+            nameof(OutboxRecord.LastError), new BsonDocument("$substrCP", new BsonArray
+            {
+                new BsonDocument("$ifNull", new BsonArray { "$" + nameof(OutboxRecord.LastError), string.Empty }),
+                0,
+                OutboxRecordSummary.LastErrorPreviewLength,
+            })
+        },
+    };
+
     public async Task<OutboxFailedPage> GetFailed(int page, int pageSize, CancellationToken cancellationToken)
     {
         page = Math.Max(page, 1);
@@ -24,18 +48,25 @@ internal sealed class MongoDbOutboxManagementStore(IMongoCollection<OutboxRecord
         var skip = (int)Math.Min((long)(page - 1) * pageSize, int.MaxValue);
 
         var totalCount = await outboxCollection.CountDocumentsAsync(FailedFilter, null, cancellationToken);
-        // The excluded Payload hydrates as null despite being non-nullable;
-        // the summary mapping below must never read it.
-        var records = await outboxCollection.Find(FailedFilter)
-            .SortByDescending(x => x.FailedAtUtc)
-            .ThenBy(x => x.Id)
+        // Members left out of the projection (Payload among them) hydrate as null or default even where the
+        // type says non-nullable; the summary mapping below must never read them.
+        var records = await outboxCollection.Aggregate()
+            .Match(FailedFilter)
+            .Sort(NewestFailureFirst)
             .Skip(skip)
             .Limit(pageSize)
-            .Project<OutboxRecord>(Builders<OutboxRecord>.Projection.Exclude(x => x.Payload))
+            .Project<OutboxRecord>(SummaryFields)
             .ToListAsync(cancellationToken);
 
         var summaries = records
-            .Select(r => new OutboxRecordSummary(r.Id, r.EnqueuedAtUtc, r.FailedAtUtc!.Value, r.Retries, r.AssemblyQualifiedType, r.LastError, r.LastErrorAtUtc))
+            .Select(r => new OutboxRecordSummary(
+                r.Id,
+                r.EnqueuedAtUtc,
+                r.FailedAtUtc!.Value,
+                r.Retries,
+                r.AssemblyQualifiedType,
+                string.IsNullOrEmpty(r.LastError) ? null : r.LastError,
+                r.LastErrorAtUtc))
             .ToArray();
 
         return new OutboxFailedPage(summaries, totalCount);

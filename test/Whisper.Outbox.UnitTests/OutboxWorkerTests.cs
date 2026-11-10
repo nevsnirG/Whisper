@@ -208,6 +208,234 @@ public class OutboxWorkerTests
     }
 
     [Fact]
+    public async Task WhenAFullBatchDispatchesCleanly_ReadsTheNextBatchWithoutWaiting()
+    {
+        using var harness = new WorkerHarness();
+        harness.WorkerOptions.BatchSize = 2;
+        // The fake clock never moves, so a wait between the polls would never end.
+        harness.WorkerOptions.PollingIntervalMs = 300_000;
+        harness.Serializer.Deserialize(Arg.Any<string>(), Arg.Any<string>()).Returns(new TestEvent());
+        var reads = 0;
+        harness.OutboxStore.ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                if (++reads == 1)
+                    return [CreateRecord(), CreateRecord()];
+                harness.Cts.Cancel();
+                return Array.Empty<OutboxRecord>();
+            });
+
+        await harness.RunToCompletion();
+
+        reads.Should().Be(2);
+        await harness.Dispatcher.Received(2).Dispatch(Arg.Any<IDomainEvent>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task WhenABatchIsNotFull_WaitsBeforeTheNextPoll()
+    {
+        using var harness = new WorkerHarness();
+        harness.WorkerOptions.BatchSize = 2;
+        harness.WorkerOptions.PollingIntervalMs = 300_000;
+        harness.Serializer.Deserialize(Arg.Any<string>(), Arg.Any<string>()).Returns(new TestEvent());
+        var record = CreateRecord();
+        var dispatched = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.OutboxStore.ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>())
+            .Returns([record]);
+        harness.OutboxStore.When(s => s.SetDispatchedAt(record, Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>()))
+            .Do(_ => dispatched.TrySetResult());
+
+        await harness.StartAsync();
+        await dispatched.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Task.Delay(200);
+        await harness.StopAsync();
+
+        await harness.OutboxStore.Received(1).ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
+    }
+
+    // Retries with no RetryDelay are due "at the next poll". Reading on without a wait would burn through every
+    // attempt of a failing record within milliseconds.
+    [Fact]
+    public async Task WhenAFullBatchHasAFailure_WaitsBeforeTheNextPoll()
+    {
+        using var harness = new WorkerHarness();
+        harness.WorkerOptions.BatchSize = 1;
+        harness.WorkerOptions.PollingIntervalMs = 300_000;
+        var record = CreateRecord();
+        harness.Serializer.Deserialize(Arg.Any<string>(), Arg.Any<string>()).Returns(new TestEvent());
+        harness.Dispatcher.When(d => d.Dispatch(Arg.Any<IDomainEvent>(), Arg.Any<CancellationToken>()))
+            .Do(_ => throw new Exception("Downstream service unavailable"));
+        var retryScheduled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        harness.OutboxStore.ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>())
+            .Returns([record]);
+        harness.OutboxStore.When(s => s.ScheduleRetry(record, Arg.Any<OutboxFailure>(), Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>()))
+            .Do(_ => retryScheduled.TrySetResult());
+
+        await harness.StartAsync();
+        await retryScheduled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Task.Delay(200);
+        await harness.StopAsync();
+
+        await harness.OutboxStore.Received(1).ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task WhenStoppingCancelsADispatch_BooksNoFailedAttempt_AndLogsNoFailure()
+    {
+        using var harness = new WorkerHarness();
+        harness.RecoverabilityOptions.MaxRetries = 1; // a booked failure would fail the record permanently
+        harness.Serializer.Deserialize(Arg.Any<string>(), Arg.Any<string>()).Returns(new TestEvent());
+        harness.Dispatcher.Dispatch(Arg.Any<IDomainEvent>(), Arg.Any<CancellationToken>())
+            .Returns(call => Task.FromCanceled(call.Arg<CancellationToken>()));
+        // Cancels the stopping token as soon as the batch is read, so the dispatch is cancelled by the shutdown.
+        harness.ReturnBatchOnceThenCancel(CreateRecord());
+
+        await harness.RunToCompletion();
+
+        await harness.OutboxStore.DidNotReceiveWithAnyArgs().ScheduleRetry(default!, default!, default, default);
+        await harness.OutboxStore.DidNotReceiveWithAnyArgs().SetFailedAt(default!, default!, default);
+        await harness.OutboxStore.DidNotReceiveWithAnyArgs().SetDispatchedAt(default!, default, default);
+        harness.LoggedLevels().Should().NotContain(level => level >= LogLevel.Warning);
+    }
+
+    // A cancellation that does not come from the shutdown (a timeout inside a handler) is an ordinary failed attempt.
+    [Fact]
+    public async Task WhenADispatchIsCancelledWithoutAShutdown_SchedulesRetry()
+    {
+        using var harness = new WorkerHarness();
+        var outboxRecord = CreateRecord();
+        harness.Serializer.Deserialize(outboxRecord.Payload, outboxRecord.AssemblyQualifiedType).Returns(new TestEvent());
+        harness.Dispatcher.When(d => d.Dispatch(Arg.Any<IDomainEvent>(), Arg.Any<CancellationToken>()))
+            .Do(_ => throw new TaskCanceledException("The handler timed out."));
+        var retries = harness.CaptureScheduleRetryCalls();
+        harness.OutboxStore.ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>())
+            .Returns([outboxRecord]);
+        // The stop is only requested once the failure has been handled.
+        harness.OutboxStore.When(s => s.ScheduleRetry(outboxRecord, Arg.Any<OutboxFailure>(), Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>()))
+            .Do(_ => harness.Cts.Cancel());
+
+        await harness.RunToCompletion();
+
+        retries.Should().ContainSingle();
+    }
+
+    // Another version of the application sharing the outbox may know the type (a rolling deployment, a rollback).
+    [Fact]
+    public async Task WhenTheEventTypeIsUnknown_SchedulesRetryInsteadOfFailingTheRecord()
+    {
+        using var harness = new WorkerHarness();
+        var outboxRecord = CreateRecord(type: "Some.Renamed.Event, Some.Assembly");
+        var unknownType = new UnknownDomainEventTypeException(outboxRecord.AssemblyQualifiedType, new TypeLoadException());
+        harness.Serializer.When(s => s.Deserialize(outboxRecord.Payload, outboxRecord.AssemblyQualifiedType))
+            .Do(_ => throw unknownType);
+        harness.ReturnBatchOnceThenCancel(outboxRecord);
+        var retries = harness.CaptureScheduleRetryCalls();
+
+        await harness.RunToCompletion();
+
+        retries.Should().ContainSingle()
+            .Which.Failure.Error.Should().Be(unknownType.ToString());
+        await harness.OutboxStore.DidNotReceiveWithAnyArgs().SetFailedAt(default!, default!, default);
+        await harness.Dispatcher.DidNotReceiveWithAnyArgs().Dispatch(Arg.Any<IDomainEvent>(), Arg.Any<CancellationToken>());
+    }
+
+    // A worker runs no use case, so an event a handler raises has no scope to be collected in. It is rejected where
+    // it is raised, and since every retry would fail the same way the record fails on the first attempt.
+    [Fact]
+    public async Task WhenAHandlerRaisesADomainEvent_FailsTheRecordOnTheFirstAttempt()
+    {
+        using var harness = new WorkerHarness();
+        harness.RecoverabilityOptions.MaxRetries = 3;
+        var outboxRecord = CreateRecord();
+        harness.Serializer.Deserialize(outboxRecord.Payload, outboxRecord.AssemblyQualifiedType).Returns(new TestEvent());
+        harness.Dispatcher.Dispatch(Arg.Any<IDomainEvent>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                Whispers.About(new TestEvent());
+                return Task.CompletedTask;
+            });
+        harness.ReturnBatchOnceThenCancel(outboxRecord);
+        var failures = harness.CaptureSetFailedAtCalls();
+
+        await harness.RunToCompletion();
+
+        failures.Should().ContainSingle()
+            .Which.Failure.Error.Should().Contain(nameof(DomainEventRaisedDuringDispatchException));
+        await harness.OutboxStore.DidNotReceiveWithAnyArgs().ScheduleRetry(default!, default!, default, default);
+    }
+
+    [Fact]
+    public async Task WhenAnotherInstanceHoldsTheWorkerLock_DoesNotReadTheOutbox()
+    {
+        using var harness = new WorkerHarness();
+        harness.WorkerOptions.UsePollingTimeProvider = false;
+        harness.WorkerOptions.PollingIntervalMs = 1;
+        var attempts = 0;
+        harness.WorkerLock = Substitute.For<IOutboxWorkerLock>();
+        harness.WorkerLock.TryAcquire(Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                if (++attempts == 3)
+                    harness.Cts.Cancel();
+                return Task.FromResult<IAsyncDisposable?>(null);
+            });
+
+        await harness.RunToCompletion();
+
+        attempts.Should().Be(3, "the worker tries again at every poll");
+        await harness.OutboxStore.DidNotReceiveWithAnyArgs().ReadNextBatch(default, default, default);
+    }
+
+    [Fact]
+    public async Task WhenTheWorkerLockIsFree_HoldsItForTheBatch_AndReleasesItAfterwards()
+    {
+        using var harness = new WorkerHarness();
+        var outboxRecord = CreateRecord();
+        harness.Serializer.Deserialize(outboxRecord.Payload, outboxRecord.AssemblyQualifiedType).Returns(new TestEvent());
+        var held = Substitute.For<IAsyncDisposable>();
+        harness.WorkerLock = Substitute.For<IOutboxWorkerLock>();
+        harness.WorkerLock.TryAcquire(Arg.Any<CancellationToken>()).Returns(Task.FromResult<IAsyncDisposable?>(held));
+        harness.ReturnBatchOnceThenCancel(outboxRecord);
+
+        await harness.RunToCompletion();
+
+        Received.InOrder(() =>
+        {
+            harness.WorkerLock.TryAcquire(Arg.Any<CancellationToken>());
+            harness.OutboxStore.ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
+            harness.OutboxStore.SetDispatchedAt(outboxRecord, Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
+            held.DisposeAsync();
+        });
+    }
+
+    [Fact]
+    public async Task WhenExclusivePollingIsOff_PollsWithoutTheWorkerLock()
+    {
+        using var harness = new WorkerHarness();
+        harness.WorkerOptions.ExclusivePolling = false;
+        harness.WorkerLock = Substitute.For<IOutboxWorkerLock>();
+        harness.ReturnBatchOnceThenCancel();
+
+        await harness.RunToCompletion();
+
+        await harness.WorkerLock.DidNotReceiveWithAnyArgs().TryAcquire(default);
+        await harness.OutboxStore.Received(1).ReadNextBatch(Arg.Any<int>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task WhenDisabled_NeverReadsTheOutbox_AndDoesNotWaitForTheInstaller()
+    {
+        using var harness = new WorkerHarness();
+        harness.WorkerOptions.Enabled = false;
+        harness.StorageIsInstalled = false; // an enabled worker would wait here until it is stopped
+
+        await harness.RunToCompletion();
+
+        harness.Cts.IsCancellationRequested.Should().BeFalse("the worker ended on its own");
+        await harness.OutboxStore.DidNotReceiveWithAnyArgs().ReadNextBatch(default, default, default);
+    }
+
+    [Fact]
     public async Task WhenReadNextBatchThrows_LogsErrorAndContinues()
     {
         using var harness = new WorkerHarness();
@@ -385,6 +613,10 @@ public class OutboxWorkerTests
     {
         private readonly CancellationTokenSource _cts = new();
         private ServiceProvider? _serviceProvider;
+        private OutboxWorker? _worker;
+
+        public IOutboxWorkerLock? WorkerLock { get; set; }
+        public bool StorageIsInstalled { get; set; } = true;
 
         public IOutboxStore OutboxStore { get; } = Substitute.For<IOutboxStore>();
         public IDomainEventSerializer Serializer { get; } = Substitute.For<IDomainEventSerializer>();
@@ -444,7 +676,7 @@ public class OutboxWorkerTests
             return calls;
         }
 
-        public async Task RunToCompletion()
+        public async Task StartAsync()
         {
             var services = new ServiceCollection();
             services.AddScoped(_ => OutboxStore);
@@ -452,24 +684,47 @@ public class OutboxWorkerTests
             _serviceProvider = services.BuildServiceProvider();
 
             var awaiter = new OutboxInstallerAwaiter();
-            awaiter.SignalCompletion();
+            if (StorageIsInstalled)
+                awaiter.SignalCompletion();
 
-            using var worker = new OutboxWorker(
+            _worker = new OutboxWorker(
                 Serializer,
                 TimeProvider,
                 awaiter,
                 Options.Create(WorkerOptions),
                 Options.Create(RecoverabilityOptions),
                 _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-                Logger);
+                Logger,
+                WorkerLock);
 
-            await worker.StartAsync(_cts.Token);
-            await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10));
-            await worker.StopAsync(CancellationToken.None);
+            await _worker.StartAsync(_cts.Token);
+        }
+
+        public async Task RunToCompletion()
+        {
+            await StartAsync();
+            await _worker!.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10));
+            await _worker.StopAsync(CancellationToken.None);
+        }
+
+        public async Task StopAsync()
+        {
+            _cts.Cancel();
+            await _worker!.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10));
+            await _worker.StopAsync(CancellationToken.None);
+        }
+
+        // The levels of everything the worker logged, in order.
+        public LogLevel[] LoggedLevels()
+        {
+            return [.. Logger.ReceivedCalls()
+                .Where(call => call.GetMethodInfo().Name == nameof(ILogger.Log))
+                .Select(call => (LogLevel)call.GetArguments()[0]!)];
         }
 
         public void Dispose()
         {
+            _worker?.Dispose();
             _serviceProvider?.Dispose();
             _cts.Dispose();
         }

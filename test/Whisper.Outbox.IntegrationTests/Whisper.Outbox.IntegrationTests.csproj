@@ -13,6 +13,7 @@
 		<PackageReference Include="FluentAssertions" Version="6.12.0" />
 		<PackageReference Include="MediatR" Version="12.4.1" />
 		<PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
+		<PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="9.10.0" />
 		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
 		<PackageReference Include="Testcontainers.MongoDb" Version="4.3.0" />
 		<PackageReference Include="Testcontainers.MsSql" Version="4.3.0" />

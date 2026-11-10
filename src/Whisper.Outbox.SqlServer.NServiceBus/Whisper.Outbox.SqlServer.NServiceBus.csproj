@@ -6,7 +6,7 @@
 		<Nullable>enable</Nullable>
 
 		<PackageId>Whisper.Outbox.SqlServer.NServiceBus</PackageId>
-		<Version>0.4.3-alpha</Version>
+		<Version>0.5.0-alpha</Version>
 		<Authors>Ken van Grinsven</Authors>
 		<Company>Grinsven Software Solutions</Company>
 
@@ -15,7 +15,6 @@
 		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
 		<PackageTags>Domain events</PackageTags>
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>
-		<PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
 		<IsPackable>true</IsPackable>
 		<Title>Whisper.Outbox.SqlServer.NServiceBus</Title>
 		<Description>Integrate into the Unit-Of-Work of NServiceBus with SqlServer persistence.</Description>
@@ -26,11 +25,15 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="NServiceBus.Persistence.Sql" Version="[4.0.0,)" />
+		<PackageReference Include="NServiceBus.Persistence.Sql" Version="[8.3.4,)" />
 	</ItemGroup>
 
 	<ItemGroup>
 		<ProjectReference Include="..\Whisper.Outbox.SqlServer\Whisper.Outbox.SqlServer.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="Whisper.Outbox.SqlServer.UnitTests" />
 	</ItemGroup>
 
 	<ItemGroup>

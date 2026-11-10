@@ -6,7 +6,7 @@
 		<Nullable>enable</Nullable>
 
 		<PackageId>Whisper.Outbox.MongoDb</PackageId>
-		<Version>4.2.0</Version>
+		<Version>5.0.0</Version>
 		<Authors>Ken van Grinsven</Authors>
 		<Company>Grinsven Software Solutions</Company>
 
@@ -15,7 +15,6 @@
 		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
 		<PackageTags>Domain events</PackageTags>
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>
-		<PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
 		<IsPackable>true</IsPackable>
 		<Title>Whisper.Outbox.MongoDb</Title>
 		<Description>MongoDb storage for Outbox.</Description>
@@ -26,7 +25,7 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="MongoDB.Driver" Version="3.*" />
+		<PackageReference Include="MongoDB.Driver" Version="[3.9.0,4.0.0)" />
 	</ItemGroup>
 
 	<ItemGroup>

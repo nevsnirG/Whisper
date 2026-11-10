@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
@@ -21,8 +23,12 @@ public static class IOutboxBuilderExtensions
         RegisterOutboxRecordClassMap();
 
         outboxBuilder.Services
-            .AddScoped<IOutboxStore>(static sp => new MongoDbOutboxStore(sp.GetOutboxCollection(), sp.GetService<IMongoSessionProvider>()))
+            .AddScoped<IOutboxStore>(static sp => new MongoDbOutboxStore(sp.GetOutboxCollection(), new DeferredMongoSessionProvider(sp)))
             .AddSingleton<IOutboxManagementStore>(static sp => new MongoDbOutboxManagementStore(sp.GetOutboxCollection()))
+            .AddSingleton<IOutboxWorkerLock>(static sp => new MongoDbOutboxWorkerLock(
+                sp.GetOutboxLockCollection(),
+                sp.GetRequiredService<TimeProvider>(),
+                sp.GetService<ILogger<MongoDbOutboxWorkerLock>>() ?? NullLogger<MongoDbOutboxWorkerLock>.Instance))
             .AddSingleton(mongoDbOutboxConfiguration)
             .AddSingleton(static sp => new OutboxMongoClient(new MongoClient(sp.GetRequiredService<MongoDbOutboxConfiguration>().ConnectionString)))
             .AddTransient<IInstallOutbox, MongoDbOutboxInstaller>()
@@ -88,10 +94,22 @@ public static class IOutboxBuilderExtensions
 
     private static IMongoCollection<OutboxRecord> GetOutboxCollection(this IServiceProvider serviceProvider)
     {
+        var configuration = serviceProvider.GetRequiredService<MongoDbOutboxConfiguration>();
+        return serviceProvider.GetOutboxDatabase().GetCollection<OutboxRecord>(configuration.CollectionName);
+    }
+
+    // The worker lock lives next to the outbox, not in it: every document in the outbox collection is a record.
+    private static IMongoCollection<BsonDocument> GetOutboxLockCollection(this IServiceProvider serviceProvider)
+    {
+        var configuration = serviceProvider.GetRequiredService<MongoDbOutboxConfiguration>();
+        return serviceProvider.GetOutboxDatabase().GetCollection<BsonDocument>($"{configuration.CollectionName}.locks");
+    }
+
+    private static IMongoDatabase GetOutboxDatabase(this IServiceProvider serviceProvider)
+    {
         var mongoClient = serviceProvider.GetRequiredService<OutboxMongoClient>().Client;
         var configuration = serviceProvider.GetRequiredService<MongoDbOutboxConfiguration>();
-        var database = mongoClient.GetDatabase(configuration.DatabaseName);
-        return database.GetCollection<OutboxRecord>(configuration.CollectionName);
+        return mongoClient.GetDatabase(configuration.DatabaseName);
     }
 
     private static void RegisterOutboxRecordClassMap()
@@ -99,8 +117,20 @@ public static class IOutboxBuilderExtensions
         BsonClassMap.TryRegisterClassMap<OutboxRecord>(cm =>
         {
             cm.AutoMap();
+            // A version that adds a field must not stop this one from reading the collection, which is what happens
+            // while both run side by side in a rolling deployment, and after a rollback.
+            cm.SetIgnoreExtraElements(true);
             cm.MapIdMember(u => u.Id)
                 .SetSerializer(new GuidSerializer(GuidRepresentation.Standard));
+            // These three are stored the way they always were: as a {DateTime, Ticks, Offset} document, the driver's
+            // default for DateTimeOffset. Stated here so a different default can never split one collection into
+            // two representations, which filters and sorts cannot compare with each other.
+            cm.MapMember(u => u.EnqueuedAtUtc)
+                .SetSerializer(new DateTimeOffsetSerializer(BsonType.Document));
+            cm.MapMember(u => u.DispatchedAtUtc)
+                .SetSerializer(new NullableSerializer<DateTimeOffset>(new DateTimeOffsetSerializer(BsonType.Document)));
+            cm.MapMember(u => u.FailedAtUtc)
+                .SetSerializer(new NullableSerializer<DateTimeOffset>(new DateTimeOffsetSerializer(BsonType.Document)));
             // BsonType.DateTime is mandatory here: $lte filters and sorts on these members need plain BSON dates,
             // not the driver's default DateTimeOffset representation (a {DateTime, Ticks, Offset} document).
             cm.MapMember(u => u.NextRetryAtUtc)

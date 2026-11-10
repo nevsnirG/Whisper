@@ -13,7 +13,7 @@ public class RetryAllEndpointTests
         store.RetryAll(Arg.Any<CancellationToken>()).Returns(5_000_000_000L);
         await using var app = await DashboardTestHost.StartAnonymousHost(store);
 
-        var response = await app.GetTestClient().PostAsync("/whisper/outbox/api/failed/retry-all", content: null);
+        var response = await app.GetDashboardClient().PostAsync("/whisper/outbox/api/failed/retry-all", content: null);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());

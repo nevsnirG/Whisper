@@ -84,6 +84,10 @@
 const BASE = location.pathname.endsWith('/') ? location.pathname : location.pathname + '/';
 const api = path => BASE + path;
 
+// The retry and delete endpoints only accept requests with this header. Another site cannot make the browser
+// send it, which is what keeps it from retrying or deleting records on behalf of whoever is signed in here.
+const COMMAND_HEADERS = { 'X-Whisper-Outbox': '1' };
+
 const PAGE_SIZE = 50;
 const COLUMN_COUNT = 7;
 const AUTO_REFRESH_MS = 10000;
@@ -415,7 +419,7 @@ async function deleteRecord(id) {
 async function sendCommand(path, method, successMessage) {
   inFlight++;
   try {
-    const response = await fetch(api(path), { method });
+    const response = await fetch(api(path), { method, headers: COMMAND_HEADERS });
     if (response.status === 404) {
       setStatus('The record was already retried or deleted.', false, 'action');
     } else if (!response.ok) {
@@ -432,9 +436,11 @@ async function sendCommand(path, method, successMessage) {
 }
 
 async function retryAll() {
+  // The count is the one on screen; the server re-queues whatever is failed when the request arrives.
+  if (!confirm(`Re-queue all failed records for dispatch? There were ${totalCount} at the last refresh.`)) return;
   inFlight++;
   try {
-    const response = await fetch(api('api/failed/retry-all'), { method: 'POST' });
+    const response = await fetch(api('api/failed/retry-all'), { method: 'POST', headers: COMMAND_HEADERS });
     if (!response.ok) throw new Error(`Retry all returned HTTP ${response.status}.`);
     const data = await response.json();
     setStatus(`Re-queued ${data.retried} record(s) for dispatch.`, false, 'action');

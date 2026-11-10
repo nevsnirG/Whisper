@@ -229,6 +229,47 @@ public sealed class MongoDbOutboxStoreTests : IAsyncLifetime
         (await _typedCollection.CountDocumentsAsync(FilterDefinition<OutboxRecord>.Empty)).Should().Be(0);
     }
 
+    // A newer version of the application adds a field to the documents it writes. This version must keep reading
+    // the collection while both run side by side in a rolling deployment, and after a rollback.
+    [Fact]
+    public async Task ReadNextBatch_DocumentWithAFieldThisVersionDoesNotKnow_StillReadsIt()
+    {
+        var record = NewRecord();
+        using var scope = _provider.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
+        await store.Add(record, CancellationToken.None);
+        await _rawCollection.UpdateManyAsync(
+            FilterDefinition<BsonDocument>.Empty,
+            Builders<BsonDocument>.Update.Set("FieldAddedByANewerVersion", "some value"));
+
+        var batch = await store.ReadNextBatch(10, BaseTime, CancellationToken.None);
+
+        batch.Should().ContainSingle().Which.Id.Should().Be(record.Id);
+    }
+
+    // Guards the representation each timestamp is stored in. The first three are documents because that is how they
+    // have always been written; changing that would leave a collection with two representations that filters and
+    // sorts cannot compare with each other.
+    [Fact]
+    public async Task Add_StoresEveryTimestampInItsEstablishedRepresentation()
+    {
+        var record = NewRecord();
+        using var scope = _provider.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
+        await store.Add(record, CancellationToken.None);
+        await store.ScheduleRetry(record, new OutboxFailure("transient", BaseTime), BaseTime.AddMinutes(5), CancellationToken.None);
+        await store.SetFailedAt(record, new OutboxFailure("broken", BaseTime), CancellationToken.None);
+        await store.SetDispatchedAt(record, BaseTime, CancellationToken.None);
+
+        var raw = await _rawCollection.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync();
+
+        raw["EnqueuedAtUtc"].BsonType.Should().Be(BsonType.Document);
+        raw["DispatchedAtUtc"].BsonType.Should().Be(BsonType.Document);
+        raw["FailedAtUtc"].BsonType.Should().Be(BsonType.Document);
+        raw["NextRetryAtUtc"].BsonType.Should().Be(BsonType.DateTime);
+        raw["LastErrorAtUtc"].BsonType.Should().Be(BsonType.DateTime);
+    }
+
     private static OutboxRecord NewRecord(Guid? id = null) => new()
     {
         Id = id ?? Guid.NewGuid(),

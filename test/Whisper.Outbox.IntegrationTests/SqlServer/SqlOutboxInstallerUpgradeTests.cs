@@ -65,7 +65,95 @@ public sealed class SqlOutboxInstallerUpgradeTests(MsSqlFixture sqlFixture)
             .Which.Id.Should().Be(legacyRecordId);
     }
 
-    private static ServiceProvider BuildServiceProvider(string connectionString)
+    // A table from before constraint names carried the table name keeps its constraints under their old names.
+    // The installer must recognize them instead of adding a second copy under the new name.
+    [Fact]
+    public async Task InstallCollection_OnLegacySchema_DoesNotDuplicateExistingCheckConstraints()
+    {
+        var connectionString = await sqlFixture.CreateDatabaseAsync();
+        await CreateLegacyTableWithRecord(connectionString, Guid.NewGuid());
+        await using var provider = BuildServiceProvider(connectionString);
+
+        await provider.GetRequiredService<IInstallOutbox>().InstallCollection(CancellationToken.None);
+
+        (await CheckConstraintNames(connectionString)).Should().BeEquivalentTo(
+            "CK_Outbox_EnqueuedAt_IsUTC",
+            "CK_Outbox_DispatchedAt_IsUTC",
+            "CK_Outbox_FailedAt_IsUTC_outboxrecords",
+            "CK_Outbox_LastErrorAt_IsUTC_outboxrecords",
+            "CK_Outbox_NextRetryAt_IsUTC_outboxrecords");
+    }
+
+    // The one table per schema that older versions could create holds the unsuffixed constraint names.
+    [Fact]
+    public async Task InstallCollection_SecondTableNextToALegacyTable_Installs()
+    {
+        var connectionString = await sqlFixture.CreateDatabaseAsync();
+        await CreateLegacyTableWithRecord(connectionString, Guid.NewGuid());
+        await using var provider = BuildServiceProvider(connectionString, tableName: "second_outbox");
+
+        var act = () => provider.GetRequiredService<IInstallOutbox>().InstallCollection(CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+        (await SqlIndexes.Exists(connectionString, "second_outbox", "IX_Outbox_Ready_ByDue")).Should().BeTrue();
+    }
+
+    // The ready index as Whisper.Outbox.SqlServer 4.1 created it: without its filter columns, which made SQL Server
+    // read the whole table on every poll.
+    [Fact]
+    public async Task InstallCollection_ReadyIndexWithoutItsFilterColumns_IsRebuiltWithThem()
+    {
+        var connectionString = await sqlFixture.CreateDatabaseAsync();
+        await using var provider = BuildServiceProvider(connectionString);
+        var installer = provider.GetRequiredService<IInstallOutbox>();
+        await installer.InstallCollection(CancellationToken.None);
+        await Execute(connectionString, """
+DROP INDEX IX_Outbox_Ready_ByDue ON [dbo].[outboxrecords];
+CREATE NONCLUSTERED INDEX IX_Outbox_Ready_ByDue
+ON [dbo].[outboxrecords] (NextRetryAtUtc, Id)
+WHERE DispatchedAtUtc IS NULL AND FailedAtUtc IS NULL;
+""");
+        (await SqlIndexes.IncludedColumns(connectionString, "outboxrecords", "IX_Outbox_Ready_ByDue")).Should().BeEmpty();
+
+        await installer.InstallCollection(CancellationToken.None);
+
+        (await SqlIndexes.IncludedColumns(connectionString, "outboxrecords", "IX_Outbox_Ready_ByDue"))
+            .Should().BeEquivalentTo("DispatchedAtUtc", "FailedAtUtc");
+    }
+
+    private static async Task<string[]> CheckConstraintNames(string connectionString)
+    {
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT name FROM sys.check_constraints WHERE parent_object_id = OBJECT_ID(N'[dbo].[outboxrecords]')";
+
+        var names = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            names.Add(reader.GetString(0));
+        return [.. names];
+    }
+
+    private static async Task Execute(string connectionString, string sql)
+    {
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static ServiceProvider BuildServiceProvider(string connectionString, string? tableName = null)
+    {
+        var configuration = tableName is null
+            ? new SqlOutboxConfiguration { ConnectionString = connectionString }
+            : new SqlOutboxConfiguration { ConnectionString = connectionString, TableName = tableName };
+
+        return BuildServiceProvider(configuration);
+    }
+
+    private static ServiceProvider BuildServiceProvider(SqlOutboxConfiguration configuration)
     {
         var services = new ServiceCollection();
         services.AddMediatR(cfg =>
@@ -75,10 +163,7 @@ public sealed class SqlOutboxInstallerUpgradeTests(MsSqlFixture sqlFixture)
         services.AddWhisper(b =>
         {
             b.AddMediatR();
-            b.AddOutbox(o => o.AddSqlServer(new SqlOutboxConfiguration
-            {
-                ConnectionString = connectionString,
-            }));
+            b.AddOutbox(o => o.AddSqlServer(configuration));
         });
         return services.BuildServiceProvider();
     }

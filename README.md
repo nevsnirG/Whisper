@@ -109,6 +109,34 @@ Without an explicit scope, `Whispers.About()` stores events in an **implicit col
 
 > Most users don’t need to manage scopes explicitly — integrations (like MediatR) take care of flushing at the right time. This is why the integrations (the AspNetCore middleware, the MediatR behavior) create an explicit scope per request/pipeline.
 
+### 4) One dispatch per use case
+
+Domain events are dispatched **once, after the use case that raised them**. A handler of a domain event cannot raise another one in the scope it is handled in: there is no later moment at which it would be dispatched. Instead of dropping such an event, `Whispers.About` throws a `DomainEventRaisedDuringDispatchException` that names it, at the line that raised it.
+
+A handler that has follow-up work starts a **new use case**, which has a scope of its own. With MediatR that means sending a command:
+
+```csharp
+public sealed class OrderApprovedHandler(IMediator mediator) : INotificationHandler<OrderApproved>
+{
+    public Task Handle(OrderApproved notification, CancellationToken cancellationToken)
+        => mediator.Send(new ReserveStock(notification.OrderId), cancellationToken); // its events are dispatched when it completes
+}
+```
+
+The integrations mark the dispatch for you. If you dispatch yourself, do the same:
+
+```csharp
+using var scope = Whispers.CreateScope();
+// ... the use case
+var raised = Whispers.GetAndClearEvents();
+
+using (Whispers.BeginDispatch()) // About() throws until this is disposed; a scope created inside it collects again
+{
+    foreach (var dispatcher in dispatchers)
+        await dispatcher.Dispatch(raised, CancellationToken.None);
+}
+```
+
 ---
 
 ## MediatR integration
@@ -155,6 +183,8 @@ services.AddWhisper(b => b.AddMediatR());             // inner: dispatches befor
 
 > **Warning — wrong order:** a unit-of-work behavior registered *after* Whisper's runs inside it, so it commits first and the dispatch runs afterwards. With the outbox and a connection lease provider, the outbox write then uses a transaction that has already completed: the request fails after its changes were committed, and the events are lost.
 
+> **Send from a scope:** Whisper's behavior depends on scoped services (the dispatchers), so `IMediator.Send` has to run inside a DI scope. Resolving `IMediator` from the root provider (in a singleton, or a hosted service that injects it directly) fails under scope validation, which is on in the Development environment. Create a scope and resolve `IMediator` from it.
+
 ---
 
 ## AspNetCore integration
@@ -189,10 +219,13 @@ Whisper provides an **outbox** for reliable, asynchronous dispatch:
 - Supports **MongoDB** and **SQL Server**.
 - Optionally participates in your unit of work via very small provider abstractions.
 
-**Unit-of-work participation is opt-in**, enabled explicitly via builder methods — `ob.UseConnectionLeaseProvider<T>()` (SQL Server) and `ob.UseMongoSessionProvider<T>()` (MongoDB). Ownership follows origin: **Whisper disposes only what it creates, and it creates only when no provider is registered.**
+With the outbox added, the request path only **stores** events; the worker delivers them to the other dispatchers you registered (such as `b.AddMediatR()`). It does not matter whether those are registered before or after `b.AddOutbox(...)`. An outbox with no dispatcher to deliver to does not start: its worker would mark every event as dispatched without delivering it.
+
+**Unit-of-work participation is opt-in**, enabled explicitly via builder methods — `ob.UseConnectionLeaseProvider<T>()` (SQL Server) and `ob.UseMongoSessionProvider<T>()` (MongoDB). Ownership follows origin: **Whisper disposes only what it creates, and it creates only when the host hands it nothing.**
 
 - **No provider registered:** Whisper manages its own database access. For SQL Server it opens and disposes its own `SqlConnection` per operation; a batch of events from one request is inserted in one local transaction, so it is saved entirely or not at all (or joins an ambient `TransactionScope`, see below). For MongoDB it uses plain writes with no `IClientSessionHandle` (and therefore no replica set requirement). Outbox records commit independently of any host transaction.
-- **Provider registered:** the host owns the connection/transaction/session entirely — Whisper only uses what the provider yields and never opens, begins, commits, rolls back, or disposes it.
+- **Provider registered:** it is asked when events are **stored**, and only then. Where it yields a connection/transaction/session, the host owns it entirely — Whisper only uses it and never opens, begins, commits, rolls back, or disposes it. Where it yields nothing (a scope without a unit of work), Whisper stores the events on its own access, as above.
+- **The worker never asks a provider.** Reading, marking and cleaning up records happens outside any unit of work, so the worker always uses Whisper's own database access. A provider cannot break it and does not have to know it exists.
 
 > **When the worker can see a record:** with a provider (or a `TransactionScope`), outbox records commit together with your own changes, so the worker only dispatches events for committed work. **Without a provider**, a record commits as soon as it is written — which, with commit-on-unwind ordering, is *before* your own transaction commits. The worker can then dispatch an event whose changes are not committed yet, or that roll back afterwards. Register a provider when events must only go out for committed work.
 
@@ -236,7 +269,8 @@ public interface IMongoSessionProvider
 ```
 
 > There are **no** `Commit` / `Abort` methods on this interface.  
-> When `Session` is `null`, Whisper writes without a session; otherwise it passes the session to its writes and the **host** owns it — Whisper never starts, commits, aborts, or disposes it.
+> When `Session` is `null`, Whisper stores events without a session; otherwise it stores them in that session and the **host** owns it — Whisper never starts, commits, aborts, or disposes it.  
+> Only storing events uses the session. The worker's reads and updates run outside any unit of work and never use one.
 
 **Default — no session**
 
@@ -345,14 +379,15 @@ using Microsoft.Data.SqlClient;
 
 public interface IConnectionLeaseProvider
 {
-    ValueTask<ConnectionLease> Provide(CancellationToken cancellationToken);
+    // The connection of the unit of work active in this scope, or null when there is none.
+    ValueTask<ConnectionLease?> Provide(CancellationToken cancellationToken);
 }
 
 public sealed record ConnectionLease(SqlConnection Connection, SqlTransaction? Transaction = null);
 ```
 
-> **Ownership by origin:** Whisper disposes only what it creates, and it creates only when no provider is registered.  
-> `ConnectionLease` is pure data — everything a provider yields belongs to the host; Whisper only uses the connection and transaction and never opens, commits, rolls back, or disposes them.
+> **Ownership by origin:** Whisper disposes only what it creates, and it creates only when the host hands it nothing.  
+> `ConnectionLease` is pure data — everything a provider yields belongs to the host; Whisper only uses the connection and transaction and never opens, commits, rolls back, or disposes them. When the provider returns `null`, Whisper opens and disposes its own connection for that operation.
 
 **Default — own connection per operation**
 
@@ -384,19 +419,22 @@ b.AddOutbox(ob =>
 });
 ```
 
-> Internally routes through `UseConnectionLeaseProvider`, so the same ownership rule applies: NServiceBus owns the connection and transaction; Whisper only uses them. May be called before or after `AddSqlServer` — registration is order-independent.
+> Internally routes through `UseConnectionLeaseProvider`, so the same ownership rule applies: NServiceBus owns the connection and transaction; Whisper only uses them. May be called before or after `AddSqlServer` — registration is order-independent.  
+> NServiceBus opens its storage session only while it handles a message. Events stored in any other scope (a plain HTTP request, for example) have nothing to share and are written on Whisper's own connection.
 
 **Custom unit of work**
 
-Return the connection and transaction your unit of work already owns; the unit of work keeps ownership of commit/rollback and disposal:
+Return the connection and transaction your unit of work already owns; the unit of work keeps ownership of commit/rollback and disposal. Return `null` when no unit of work is active in the scope:
 
 ```csharp
 using Whisper.Outbox.SqlServer;
 
 public sealed class UnitOfWorkConnectionLeaseProvider(MyUnitOfWork unitOfWork) : IConnectionLeaseProvider
 {
-    public ValueTask<ConnectionLease> Provide(CancellationToken cancellationToken)
-        => ValueTask.FromResult(new ConnectionLease(unitOfWork.Connection, unitOfWork.Transaction));
+    public ValueTask<ConnectionLease?> Provide(CancellationToken cancellationToken)
+        => ValueTask.FromResult(unitOfWork.IsActive
+            ? new ConnectionLease(unitOfWork.Connection, unitOfWork.Transaction)
+            : null);
 }
 ```
 
@@ -408,7 +446,8 @@ b.AddOutbox(ob =>
 });
 ```
 
-> **Warning — every scope, no fallback:** a registered `IConnectionLeaseProvider` is consulted for **every** store operation, including the background worker’s own polling scopes, where no unit of work is active. There is deliberately no fallback. Your provider must return a usable, open connection in every scope — when no unit of work is active, open one yourself (e.g., from configuration); otherwise the worker can never read or dispatch outbox records. This applies to the SQL provider only: the Mongo equivalent handles it naturally (`Session` is `null` → plain writes).
+> **Only storing events asks the provider.** A registered `IConnectionLeaseProvider` is consulted when events are written to the outbox and at no other time. Return `null` when the scope has no unit of work, and Whisper opens and disposes its own connection for that write, the same way the Mongo store writes without a session when `Session` is `null`. A lease you do return must hold an open connection. The background worker never asks: its reads and updates run on connections Whisper opens from `ConnectionString`.  
+> *Changed in 5.0:* the provider used to be consulted for every store operation, the worker's included, and had to return an open connection each time. Providers written that way keep working; they are simply no longer asked by the worker. With nullable reference types enabled they get warning CS8613 until the return type of `Provide` is updated.
 
 > `UseConnectionLeaseProvider` also has an overload taking a `Func<IServiceProvider, TProvider>` factory:  
 > `ob.UseConnectionLeaseProvider(sp => new UnitOfWorkConnectionLeaseProvider(sp.GetRequiredService<MyUnitOfWork>()));`  
@@ -424,9 +463,11 @@ b.AddOutbox(ob =>
     ob.AddSqlServer(new() { /* ... */ });
     ob.ConfigureWorker(w =>
     {
+        w.Enabled                = true; // default — false stores events here but leaves dispatching to another instance
         w.BatchSize              = 10;   // default
         w.PollingIntervalMs      = 1000; // default
         w.UsePollingTimeProvider = true; // default — the polling delay follows the registered TimeProvider
+        w.ExclusivePolling       = true; // default — instances sharing the outbox take turns (see below)
         w.RetainDispatchedFor    = TimeSpan.FromDays(7); // optional — default null keeps dispatched records forever
     });
 });
@@ -434,18 +475,34 @@ b.AddOutbox(ob =>
 
 `BatchSize` must be greater than 0, `PollingIntervalMs` must not be negative, and `RetainDispatchedFor` must be positive when set; invalid values fail options validation at host startup.
 
+> **A backlog drains without waiting:** when a full batch dispatches without a failure, the worker reads the next batch right away instead of waiting for `PollingIntervalMs`. It waits again as soon as a batch comes back short or a record in it fails, so retries stay at least one polling interval apart.
+
 > **Polling clock:** by default the polling delay is driven by the registered `TimeProvider`, so a globally registered fake `TimeProvider` (e.g. `FakeTimeProvider`) **freezes polling** until you advance it. Set `w.UsePollingTimeProvider = false` to make polling wait in real time while the registered `TimeProvider` still drives all timestamps and retry due-times. `AddOutbox` registers `TimeProvider.System` with `TryAddSingleton`, so a host-registered `TimeProvider` is never overridden.
 
 The worker reads records that are **due**: not dispatched, not failed, and `NextRetryAtUtc` null or at/before now — ordered by `NextRetryAtUtc` ascending (nulls first), then `Id` ascending. With no retry delay configured this is identical to plain `Id` order. Per record in a batch:
 
 - **Success:** the record is marked `DispatchedAtUtc`. If recording that fails (e.g. the database is unavailable), the batch stops and the record is dispatched again on a later poll; no failed attempt is booked.
-- **Deserialization failure is permanent:** the record is marked `FailedAtUtc` immediately — no retry.
+- **Deserialization failure is permanent:** a payload that cannot be deserialized into its type marks the record `FailedAtUtc` immediately — no retry.
+- **An unknown event type is retried:** when the application cannot load the type a record names (`UnknownDomainEventTypeException`), that is a failed attempt like a dispatch failure, because another version of the application sharing the outbox may know the type (a rolling deployment, a rollback). Add the exception to `UnrecoverableExceptionTypes` to fail such records on the first attempt.
 - **Dispatch failure:** an **unrecoverable** exception (per the recoverability policy) fails the record immediately; otherwise `Retries` is incremented and the next attempt is scheduled via `NextRetryAtUtc`; once `Retries + 1 >= MaxRetries`, the record is marked `FailedAtUtc`.
+- **A handler that raises a domain event fails the record on the first attempt:** the worker runs no use case, so `Whispers.About` throws there (see [One dispatch per use case](#4-one-dispatch-per-use-case)) and every retry would fail the same way. Have the handler send a command instead.
+- **A shutdown is not a failure:** a dispatch cancelled because the host is stopping books no attempt; the record stays pending and is dispatched after the restart.
 - **Every failed attempt persists the error on the record:** `LastError` (`Exception.ToString()`, truncated to 32,768 characters) and `LastErrorAtUtc` — so you can always see why a record is retrying or failed.
 
 The worker loop catches and logs all errors and keeps polling.
 
-> **Dispatched records are kept forever by default.** Nothing deletes them unless you set `RetainDispatchedFor`; the outbox table or collection then grows with every event. With it set, the worker deletes dispatched records older than the retention about once a minute, at most 10,000 per run in batches of 1,000, so a large backlog is worked off gradually without long locks.
+> **Stored type names carry no version:** a record names its event type as `Namespace.Type, Assembly`. The assembly version is left out, so a record written by a newer build still loads on an older one. Records written before this change include the version; it is ignored when they are read. Renaming or moving an event type still orphans the records that name it.
+
+> **Dispatched records are kept forever by default.** Nothing deletes them unless you set `RetainDispatchedFor`; the outbox table or collection then grows with every event. With it set, the worker deletes dispatched records older than the retention about once a minute, at most 10,000 per run in batches of 1,000, so a large backlog is worked off gradually without long locks. The installer then also creates an index on the dispatch time, so the cleanup does not have to read the whole table or collection to find what expired.
+
+### Running multiple instances
+
+Instances of an application that share an outbox **take turns** polling it. Before each poll a worker takes a lock in the outbox store and releases it when its batch is done; an instance that finds the lock taken skips that poll. Two instances therefore never dispatch the same record at the same time, and records are dispatched in order whichever instance does it.
+
+- **SQL Server:** a session-owned application lock (`sp_getapplock`) on a connection of its own, opened from the configured connection string. A crashed instance loses it the moment its connection drops.
+- **MongoDB:** a lease document in the collection `<CollectionName>.locks`, renewed while a batch runs and deleted afterwards. After a crash the other instances take over when the lease runs out, within 60 seconds. The lease is timed on the application's clock, so instances whose clocks differ by more than that can overlap.
+
+Delivery stays at-least-once: a lock lost in the middle of a batch (a dropped connection, a lease that could not be renewed) can still make a record dispatch twice. Set `w.ExclusivePolling = false` to let every instance poll on its own, or `w.Enabled = false` on instances that should only store events. A custom `IOutboxStore` gets this by registering an `IOutboxWorkerLock`; without one every instance polls on its own.
 
 > Failed records **stay in the store** — they are never deleted automatically. Monitor them yourself or use the [management dashboard](#management-dashboard) to inspect, retry, or delete them.
 
@@ -500,10 +557,13 @@ b.AddOutbox(ob =>
 
 `AddOutbox` registers an installer hosted service that prepares the store at startup:
 
-- **SQL Server:** creates the schema (if missing) and the table with a clustered primary key on `Id`, UTC check constraints, the filtered ready index `IX_Outbox_Ready_ByDue`, and the failed-records index `IX_Outbox_Failed_ByFailedAt`.
-- **MongoDB:** creates the partial index `ix_outbox_ready_by_due` and the index `ix_outbox_failed_by_failedat` on the outbox collection.
+- **SQL Server:** creates the schema (if missing) and the table with a clustered primary key on `Id`, UTC check constraints, the filtered ready index `IX_Outbox_Ready_ByDue`, and the failed-records index `IX_Outbox_Failed_ByFailedAt`. Constraint names end in the table name, so several outbox tables can share a schema.
+- **MongoDB:** creates the partial index `ix_outbox_ready_by_due` and the index `ix_outbox_failed_by_failedat_id` on the outbox collection.
+- **With `RetainDispatchedFor` set**, both also create an index on the dispatch time (`IX_Outbox_Dispatched_ByDispatchedAt` / `ix_outbox_dispatched_by_dispatchedat`).
 
-Existing tables/collections are **upgraded in place**: the installer idempotently adds the new columns (`LastError`, `LastErrorAtUtc`, `NextRetryAtUtc`) and indexes and drops the legacy undispatched index. On SQL Server this runs as two sequential batches (columns first, then constraints/indexes) so upgrades from older schemas compile cleanly. Each batch may run for up to 10 minutes, because upgrading a large table scans it several times. Instances that start at the same time take turns under an exclusive install lock; the later ones then find everything in place.
+Existing tables/collections are **upgraded in place**: the installer idempotently adds the new columns (`LastError`, `LastErrorAtUtc`, `NextRetryAtUtc`) and indexes and drops the legacy ones. On SQL Server this runs as two sequential batches (columns first, then constraints/indexes) so upgrades from older schemas compile cleanly. Each batch may run for up to 10 minutes, because upgrading a large table scans it several times. Instances that start at the same time take turns under an exclusive install lock; the later ones then find everything in place.
+
+> **Upgrading to 5.0 rebuilds two indexes.** On SQL Server `IX_Outbox_Ready_ByDue` is recreated with its filter columns included: without them SQL Server ignored the index once the table held data and read the whole table on every poll. On MongoDB `ix_outbox_failed_by_failedat` is replaced by `ix_outbox_failed_by_failedat_id`, which holds failed records in the order the dashboard lists them. Both builds read the table or collection once.
 
 Dispatches issued before installation completes are gated, not failed — they wait until the installer signals completion. The background worker waits the same way before its first poll.
 
@@ -534,13 +594,15 @@ app.MapWhisperOutbox();                        // mounts at /whisper/outbox
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /` | The dashboard page |
-| `GET /api/failed?page&pageSize` | Page failed records, `FailedAtUtc` descending (`pageSize` clamped to 1..200) |
-| `GET /api/records/{id}` | Full record incl. `Payload` and `LastError` (404 on miss) |
+| `GET /api/failed?page&pageSize` | Page failed records, `FailedAtUtc` descending (`pageSize` clamped to 1..200). `lastError` holds the first 512 characters only |
+| `GET /api/records/{id}` | Full record incl. `Payload` and the whole `LastError` (404 on miss) |
 | `POST /api/records/{id}/retry` | Re-queue a failed record (204 / 404) |
 | `POST /api/failed/retry-all` | Re-queue all failed records → `{ "retried": n }` |
 | `DELETE /api/records/{id}` | Delete a failed record (204 / 404) |
 
 Retrying resets `FailedAtUtc`, `Retries`, and `NextRetryAtUtc` but **keeps `LastError`** as an audit trail. Retry and delete only affect records that are actually failed, so the worker and the dashboard can never fight over a record.
+
+**Commands need a header.** The three endpoints that change something (`POST` and `DELETE`) answer `400` unless the request carries the `X-Whisper-Outbox` header (any value). A browser cannot add a custom header to a request another site makes it send, so a page elsewhere cannot retry or delete records on behalf of someone the browser authenticates on its own (Windows authentication, `SameSite=None` cookies). The dashboard page sends the header itself; your own API clients have to add it, or you opt out with `app.MapWhisperOutbox(configure: o => o.RequireCommandHeader = false)`. The page is also served with `X-Frame-Options: SAMEORIGIN` and `Content-Security-Policy: frame-ancestors 'self'` unless the host has set those headers already.
 
 **Secure by default.** Every endpoint is mapped with `RequireAuthorization()`; opt out explicitly via `app.MapWhisperOutbox(configure: o => o.AllowAnonymous = true)`. A host without authentication/authorization configured gets an `InvalidOperationException` on the first request — an intended fail-safe, because the dashboard exposes event payloads. `MapWhisperOutbox` returns an `IEndpointConventionBuilder` for policies of your own, and throws at map time when no outbox storage backend (and therefore no `IOutboxManagementStore`) is registered.
 
@@ -604,7 +666,8 @@ public static IServiceCollection AddWhisper(
 | Method | Description |
 | --- | --- |
 | `IDisposable CreateScope()` | Creates an ambient scope (nestable). |
-| `void About(IDomainEvent domainEvent)` | Raises a domain event from anywhere in the domain. |
+| `IDisposable BeginDispatch()` | Marks the flow as dispatching: `About` throws until it is disposed. A scope created inside it collects again. |
+| `void About(IDomainEvent domainEvent)` | Raises a domain event from anywhere in the domain. Throws `DomainEventRaisedDuringDispatchException` while events are being dispatched. |
 | `IDomainEvent[] Peek()` | Inspect currently raised events without clearing them. |
 | `IDomainEvent[] GetAndClearEvents()` | Retrieve and clear the collected events for the current (deepest) scope. |
 
@@ -631,10 +694,13 @@ No. Raise events with `Whispers.About(...)` and let Whisper collect them.
 Yes. Whisper uses `AsyncLocal<T>` to keep events bound to the current async execution flow. Concurrent `About()` calls inside a shared scope are thread-safe. Parallel branches without their own scope each get an isolated implicit collector whose events don’t flow back to the parent — by design, `AsyncLocal` flows down, not up.
 
 **How do duplicates get handled?**  
-Whisper does not attempt to deduplicate; if you need deduplication, implement it at your dispatcher/consumer side. Outbox publishing is at-least-once: a record that was dispatched successfully but not yet marked (e.g., a crash between the dispatch and `SetDispatchedAt`) is re-dispatched on a later poll — consumers must be idempotent.
+Whisper does not attempt to deduplicate; if you need deduplication, implement it at your dispatcher/consumer side. Outbox publishing is at-least-once: a record that was dispatched successfully but not yet marked (e.g., a crash between the dispatch and `SetDispatchedAt`) is re-dispatched on a later poll — consumers must be idempotent. Several instances sharing one outbox do not multiply dispatches: their workers [take turns](#running-multiple-instances).
+
+**Can a domain event handler raise another domain event?**  
+Not in the scope it is handled in: `Whispers.About` throws there, because events are dispatched once, after the use case that raised them. Send a command from the handler instead; it is a use case of its own and its events are dispatched when it completes (see [One dispatch per use case](#4-one-dispatch-per-use-case)).
 
 **Who commits/rolls back the DB transaction for the outbox?**  
-You do — if there is one. The rule: **Whisper disposes only what it creates, and it creates only when no provider is registered.** Without a provider there is no host transaction: Whisper opens and disposes its own `SqlConnection` per operation (SQL Server) or performs plain writes (MongoDB), and outbox records commit independently. With a provider registered (`UseConnectionLeaseProvider` / `UseMongoSessionProvider`), the host owns the connection/transaction/session entirely — Whisper only uses them and never begins, commits, rolls back, or disposes anything. With a provider, the worker only sees records once your unit of work has committed; without one, it can see them before (see [Outbox & transactions](#outbox--transactions)). Dispatch is at-least-once either way.
+You do — if there is one. The rule: **Whisper disposes only what it creates, and it creates only when the host hands it nothing.** Without a provider there is no host transaction: Whisper opens and disposes its own `SqlConnection` per operation (SQL Server) or performs plain writes (MongoDB), and outbox records commit independently. With a provider registered (`UseConnectionLeaseProvider` / `UseMongoSessionProvider`), the host owns whatever connection/transaction/session the provider yields for storing events — Whisper only uses it and never begins, commits, rolls back, or disposes anything. Where the provider yields nothing, and for everything the worker does, Whisper works as it does without a provider. With a provider, the worker only sees records once your unit of work has committed; without one, it can see them before (see [Outbox & transactions](#outbox--transactions)). Dispatch is at-least-once either way.
 
 **Where do I see why an event failed?**  
 On the record itself. Every failed dispatch attempt persists the exception on the outbox record — `LastError` (`Exception.ToString()`, truncated) and `LastErrorAtUtc` — while the record is retrying and after it fails permanently. Mount the management dashboard from `Whisper.Outbox.AspNetCore` (`app.MapWhisperOutbox()`) to browse failed records, inspect the error and payload, and retry or delete them.

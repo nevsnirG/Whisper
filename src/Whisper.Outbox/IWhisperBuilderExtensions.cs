@@ -9,34 +9,32 @@ public static class IWhisperBuilderExtensions
 {
     public static IWhisperBuilder AddOutbox(this IWhisperBuilder whisperBuilder, Action<IOutboxBuilder> configure)
     {
-        DecorateDispatchersAsInnerDispatchers(whisperBuilder);
+        var services = whisperBuilder.Services;
 
-        whisperBuilder.Services.TryAddTransient<IUuidProvider, DefaultUuidProvider>();
-        whisperBuilder.Services.TryAddSingleton(TimeProvider.System);
-        whisperBuilder.Services
-            .AddSingleton<OutboxInstallerAwaiter>()
-            .AddScoped<OutboxDispatcher>()
-            .AddScoped<IDispatchDomainEvents>(static sp =>
-            {
-                var awaiter = sp.GetRequiredService<OutboxInstallerAwaiter>();
-                var inner = sp.GetRequiredService<OutboxDispatcher>();
+        // Once now, for the dispatchers registered before this call, and again when AddWhisper has finished
+        // configuring, for those registered after it. So b.AddMediatR() works on either side of b.AddOutbox(...).
+        OutboxDispatcherRegistrations.MoveDispatchersBehindTheOutbox(services);
+        whisperBuilder.OnConfigured(OutboxDispatcherRegistrations.MoveDispatchersBehindTheOutbox);
+        OutboxDispatcherRegistrations.AddOutboxDispatcher(services);
 
-                return awaiter.IsReady
-                    ? inner
-                    : new BlockingOutboxDispatcher(awaiter, inner);
-            })
-            .AddSingleton<IDomainEventSerializer, DomainEventSerializer>()
+        services.TryAddTransient<IUuidProvider, DefaultUuidProvider>();
+        services.TryAddSingleton(TimeProvider.System);
+        services.TryAddSingleton<OutboxInstallerAwaiter>();
+        services.TryAddScoped<OutboxDispatcher>();
+        services.TryAddSingleton<IDomainEventSerializer, DomainEventSerializer>();
+        services.TryAddSingleton(new OutboxDispatcherRegistrations(services));
+        services
             .AddHostedService<OutboxInstaller>()
             .AddHostedService<OutboxWorker>();
         // Only values that break the worker are rejected: BatchSize 0 means "no limit" to the Mongo driver
         // (and selects nothing on SQL Server), PollingIntervalMs -1 is Timeout.Infinite to Task.Delay and
         // other negative intervals throw. A 0 ms interval polls continuously, which works.
-        whisperBuilder.Services.AddOptions<OutboxWorkerOptions>()
+        services.AddOptions<OutboxWorkerOptions>()
             .Validate(o => o.BatchSize > 0, $"{nameof(OutboxWorkerOptions)}.{nameof(OutboxWorkerOptions.BatchSize)} must be greater than 0.")
             .Validate(o => o.PollingIntervalMs >= 0, $"{nameof(OutboxWorkerOptions)}.{nameof(OutboxWorkerOptions.PollingIntervalMs)} must not be negative.")
             .Validate(o => o.RetainDispatchedFor is null || o.RetainDispatchedFor > TimeSpan.Zero, $"{nameof(OutboxWorkerOptions)}.{nameof(OutboxWorkerOptions.RetainDispatchedFor)} must be positive when set.")
             .ValidateOnStart();
-        configure?.Invoke(new OutboxBuilder(whisperBuilder.Services));
+        configure?.Invoke(new OutboxBuilder(services));
         return whisperBuilder;
     }
 
@@ -71,37 +69,6 @@ public static class IWhisperBuilderExtensions
     {
         outboxBuilder.Services.Configure(configure);
         return outboxBuilder;
-    }
-
-    private static void DecorateDispatchersAsInnerDispatchers(IWhisperBuilder whisperBuilder)
-    {
-        // Keyed registrations (the host's own, or the inner dispatchers of an earlier AddOutbox call) are
-        // not part of the request path, so they are left as they are.
-        var domainEventDispatcherServiceDescriptors = whisperBuilder.Services
-            .Where(s => s.ServiceType == typeof(IDispatchDomainEvents) && !s.IsKeyedService)
-            .ToArray();
-
-        foreach (var serviceDescriptor in domainEventDispatcherServiceDescriptors)
-        {
-            whisperBuilder.Services.Remove(serviceDescriptor);
-            AddKeyedFromDescriptor(whisperBuilder.Services, serviceDescriptor, ServiceKeys.InnerDispatcher);
-        }
-    }
-
-    private static void AddKeyedFromDescriptor(IServiceCollection services, ServiceDescriptor sd, object serviceKey)
-    {
-        if (sd.ImplementationType is not null)
-        {
-            services.Add(new(sd.ServiceType, serviceKey, sd.ImplementationType, sd.Lifetime));
-        }
-        else if (sd.ImplementationFactory is not null)
-        {
-            services.Add(new(sd.ServiceType, serviceKey, (sp, key) => sd.ImplementationFactory(sp), sd.Lifetime));
-        }
-        else
-        {
-            services.Add(new(sd.ServiceType, serviceKey, sd.ImplementationInstance!));
-        }
     }
 
     private sealed record OutboxBuilder(IServiceCollection Services) : IOutboxBuilder;

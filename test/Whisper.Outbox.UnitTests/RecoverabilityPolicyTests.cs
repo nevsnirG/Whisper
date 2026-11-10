@@ -61,6 +61,17 @@ public class RecoverabilityPolicyTests
         result.Should().BeFalse();
     }
 
+    // Raising a domain event from a handler is a programming error that every retry would repeat.
+    [Fact]
+    public void IsUnrecoverable_DomainEventRaisedDuringDispatch_ReturnsTrueWithoutConfiguration()
+    {
+        var result = CreateSut().IsUnrecoverable(new DomainEventRaisedDuringDispatchException(new RaisedByAHandler()));
+
+        result.Should().BeTrue();
+    }
+
+    private sealed record RaisedByAHandler : IDomainEvent;
+
     [Fact]
     public void IsUnrecoverable_MatchingPredicate_ReturnsTrue()
     {

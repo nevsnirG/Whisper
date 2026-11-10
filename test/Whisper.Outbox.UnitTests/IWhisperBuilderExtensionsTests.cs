@@ -110,6 +110,83 @@ public class IWhisperBuilderExtensionsTests
 
     private sealed record WorkerTestEvent(string Value) : IDomainEvent;
 
+    // b.AddMediatR() (or any dispatcher) on either side of b.AddOutbox(...) ends up behind the outbox: the request
+    // path dispatches to the outbox only, and the worker delivers to the dispatcher.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AddOutbox_BeforeOrAfterAnotherDispatcher_PutsThatDispatcherBehindTheOutbox(bool outboxFirst)
+    {
+        var serviceCollection = new ServiceCollection() as IServiceCollection;
+        serviceCollection.AddOptions();
+        serviceCollection.AddSingleton(Substitute.For<IOutboxStore>());
+        serviceCollection.AddWhisper(b =>
+        {
+            if (outboxFirst)
+            {
+                b.AddOutbox(_ => { });
+                b.Services.AddScoped<IDispatchDomainEvents, FakeDispatcher>();
+            }
+            else
+            {
+                b.Services.AddScoped<IDispatchDomainEvents, FakeDispatcher>();
+                b.AddOutbox(_ => { });
+            }
+        });
+
+        using var serviceProvider = serviceCollection.BuildServiceProvider();
+        using var scope = serviceProvider.CreateScope();
+
+        scope.ServiceProvider.GetServices<IDispatchDomainEvents>()
+            .Should().ContainSingle().Which.Should().BeOfType<BlockingOutboxDispatcher>();
+        scope.ServiceProvider.GetKeyedServices<IDispatchDomainEvents>(ServiceKeys.InnerDispatcher)
+            .Should().ContainSingle().Which.Should().BeOfType<FakeDispatcher>();
+    }
+
+    [Fact]
+    public void AddOutbox_DispatcherAddedInALaterAddWhisperCall_PutsThatDispatcherBehindTheOutbox()
+    {
+        var serviceCollection = new ServiceCollection() as IServiceCollection;
+        serviceCollection.AddOptions();
+        serviceCollection.AddSingleton(Substitute.For<IOutboxStore>());
+        serviceCollection.AddWhisper(b => b.AddOutbox(_ => { }));
+        serviceCollection.AddWhisper(b => b.Services.AddScoped<IDispatchDomainEvents, FakeDispatcher>());
+
+        using var serviceProvider = serviceCollection.BuildServiceProvider();
+        using var scope = serviceProvider.CreateScope();
+
+        scope.ServiceProvider.GetServices<IDispatchDomainEvents>()
+            .Should().ContainSingle().Which.Should().BeOfType<BlockingOutboxDispatcher>();
+        scope.ServiceProvider.GetKeyedServices<IDispatchDomainEvents>(ServiceKeys.InnerDispatcher)
+            .Should().ContainSingle().Which.Should().BeOfType<FakeDispatcher>();
+    }
+
+    [Fact]
+    public void AddOutbox_CalledTwice_RegistersTheOutboxDispatcherOnce()
+    {
+        var serviceCollection = new ServiceCollection() as IServiceCollection;
+        serviceCollection.AddOptions();
+        serviceCollection.AddSingleton(Substitute.For<IOutboxStore>());
+        serviceCollection.AddWhisper(b =>
+        {
+            b.AddOutbox(_ => { });
+            b.AddOutbox(_ => { });
+        });
+
+        using var serviceProvider = serviceCollection.BuildServiceProvider();
+        using var scope = serviceProvider.CreateScope();
+
+        scope.ServiceProvider.GetServices<IDispatchDomainEvents>().Should().ContainSingle();
+        scope.ServiceProvider.GetKeyedServices<IDispatchDomainEvents>(ServiceKeys.InnerDispatcher).Should().BeEmpty();
+    }
+
+    private sealed class FakeDispatcher : IDispatchDomainEvents
+    {
+        public Task Dispatch(IDomainEvent domainEvent, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task Dispatch(IDomainEvent[] domainEvents, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
     [Fact]
     public void AddOutbox_WhenHostRegisteredTimeProvider_DoesNotOverrideIt()
     {

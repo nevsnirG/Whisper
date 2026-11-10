@@ -2,7 +2,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using System.Diagnostics.CodeAnalysis;
 using Whisper.Abstractions;
 using Whisper.Outbox.Abstractions;
 
@@ -14,7 +13,8 @@ internal sealed class OutboxWorker(IDomainEventSerializer domainEventSerializer,
                                    IOptions<OutboxWorkerOptions> outboxWorkerOptions,
                                    IOptions<OutboxRecoverabilityOptions> outboxRecoverabilityOptions,
                                    IServiceScopeFactory serviceScopeFactory,
-                                   ILogger<OutboxWorker> logger) : BackgroundService
+                                   ILogger<OutboxWorker> logger,
+                                   IOutboxWorkerLock? workerLock = null) : BackgroundService
 {
     internal const int MaxErrorLength = 32_768;
     internal const int RetentionBatchSize = 1_000;
@@ -30,6 +30,12 @@ internal sealed class OutboxWorker(IDomainEventSerializer domainEventSerializer,
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (!_outboxWorkerOptions.Enabled)
+        {
+            logger.LogInformation("Outbox worker is disabled on this instance: it stores events but does not dispatch them.");
+            return;
+        }
+
         await outboxInstallerAwaiter.WaitForCompletion(stoppingToken);
 
         logger.LogInformation("Outbox worker started with batch size {BatchSize} and polling interval {PollingIntervalMs}ms.",
@@ -37,9 +43,10 @@ internal sealed class OutboxWorker(IDomainEventSerializer domainEventSerializer,
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            var moreRecordsAreWaiting = false;
             try
             {
-                await ProcessNextBatch(stoppingToken);
+                moreRecordsAreWaiting = await Poll(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -51,8 +58,27 @@ internal sealed class OutboxWorker(IDomainEventSerializer domainEventSerializer,
             }
 
             await DeleteExpiredDispatchedRecordsWhenDue(stoppingToken);
-            await Delay(stoppingToken);
+
+            // A full batch that dispatched cleanly means a backlog, so the next batch is read right away. After a
+            // failure the worker always waits, which keeps retries at least one polling interval apart.
+            if (!moreRecordsAreWaiting)
+                await Delay(stoppingToken);
         }
+    }
+
+    // Returns whether the next poll should follow immediately.
+    private async Task<bool> Poll(CancellationToken cancellationToken)
+    {
+        if (workerLock is null || !_outboxWorkerOptions.ExclusivePolling)
+            return await ProcessNextBatch(cancellationToken);
+
+        // Instances that share the outbox take turns: without the lock they would all read the same records and
+        // dispatch each of them once per instance.
+        await using var held = await workerLock.TryAcquire(cancellationToken);
+        if (held is null)
+            return false;
+
+        return await ProcessNextBatch(cancellationToken);
     }
 
     private async Task DeleteExpiredDispatchedRecordsWhenDue(CancellationToken stoppingToken)
@@ -111,35 +137,56 @@ internal sealed class OutboxWorker(IDomainEventSerializer domainEventSerializer,
         }
     }
 
-    private async Task ProcessNextBatch(CancellationToken cancellationToken)
+    // Returns whether the batch was full and every record in it was dispatched.
+    private async Task<bool> ProcessNextBatch(CancellationToken cancellationToken)
     {
         using var scope = serviceScopeFactory.CreateScope();
         var outboxStore = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
         var outboxRecordBatch = await outboxStore.ReadNextBatch(_outboxWorkerOptions.BatchSize, timeProvider.GetUtcNow(), cancellationToken);
 
-        if (outboxRecordBatch is [])
-            return;
-
+        var allDispatched = true;
         foreach (var outboxRecord in outboxRecordBatch)
-            await ProcessOutboxRecord(outboxStore, outboxRecord, cancellationToken);
+            allDispatched &= await ProcessOutboxRecord(outboxStore, outboxRecord, cancellationToken);
+
+        return allDispatched && outboxRecordBatch.Length >= _outboxWorkerOptions.BatchSize;
     }
 
-    private async Task ProcessOutboxRecord(IOutboxStore outboxStore, OutboxRecord outboxRecord, CancellationToken cancellationToken)
+    // Returns whether the record was dispatched.
+    private async Task<bool> ProcessOutboxRecord(IOutboxStore outboxStore, OutboxRecord outboxRecord, CancellationToken cancellationToken)
     {
-        if (!TryDeserialize(outboxRecord, out var domainEvent, out var deserializationError))
+        IDomainEvent domainEvent;
+        try
         {
-            await outboxStore.SetFailedAt(outboxRecord, CreateFailure(deserializationError), cancellationToken);
-            return;
+            domainEvent = domainEventSerializer.Deserialize(outboxRecord.Payload, outboxRecord.AssemblyQualifiedType);
+        }
+        catch (UnknownDomainEventTypeException ex)
+        {
+            // This build does not know the type, but another version sharing the outbox may (a rolling deployment,
+            // a rollback). So it is a failed attempt like any other, not a permanent failure.
+            await HandleDispatchFailure(outboxStore, outboxRecord, ex, cancellationToken);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Permanent deserialization failure for outbox record {OutboxRecordId}. Record will be marked as failed.", outboxRecord.Id);
+            await outboxStore.SetFailedAt(outboxRecord, CreateFailure(ex), cancellationToken);
+            return false;
         }
 
         try
         {
             await DispatchToInnerDispatchers(domainEvent, cancellationToken);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The host is stopping, which is not a failed attempt: the record stays pending and is dispatched again
+            // after the restart.
+            throw;
+        }
         catch (Exception ex)
         {
             await HandleDispatchFailure(outboxStore, outboxRecord, ex, cancellationToken);
-            return;
+            return false;
         }
 
         // Outside the try above: the dispatch succeeded, so failing to record it is a storage problem, not a failed
@@ -147,23 +194,7 @@ internal sealed class OutboxWorker(IDomainEventSerializer domainEventSerializer,
         // record is dispatched again on a later poll. Not cancellable: a shutdown cancelling this mark would also
         // make the record dispatch again after the restart.
         await outboxStore.SetDispatchedAt(outboxRecord, timeProvider.GetUtcNow(), CancellationToken.None);
-    }
-
-    private bool TryDeserialize(OutboxRecord record, [NotNullWhen(true)] out IDomainEvent? domainEvent, [NotNullWhen(false)] out Exception? error)
-    {
-        try
-        {
-            domainEvent = domainEventSerializer.Deserialize(record.Payload, record.AssemblyQualifiedType);
-            error = null;
-            return true;
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Permanent deserialization failure for outbox record {OutboxRecordId}. Record will be marked as failed.", record.Id);
-            domainEvent = null;
-            error = ex;
-            return false;
-        }
+        return true;
     }
 
     private async Task DispatchToInnerDispatchers(IDomainEvent domainEvent, CancellationToken cancellationToken)
@@ -172,6 +203,10 @@ internal sealed class OutboxWorker(IDomainEventSerializer domainEventSerializer,
         var dispatchers = scope.ServiceProvider
             .GetKeyedServices<IDispatchDomainEvents>(ServiceKeys.InnerDispatcher)
             .Where(s => s is not OutboxDispatcher);
+
+        // No use case is running here, so an event a handler raises has no scope to be collected in and would be
+        // lost. Whispers.About throws instead; a handler that sends a command gets a scope from that command.
+        using var dispatching = Whispers.BeginDispatch();
 
         foreach (var dispatcher in dispatchers)
             await dispatcher.Dispatch(domainEvent, cancellationToken);

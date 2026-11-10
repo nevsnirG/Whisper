@@ -6,7 +6,7 @@
 		<Nullable>enable</Nullable>
 
 		<PackageId>Whisper.Outbox.SqlServer</PackageId>
-		<Version>4.1.0</Version>
+		<Version>5.0.0</Version>
 		<Authors>Ken van Grinsven</Authors>
 		<Company>Grinsven Software Solutions</Company>
 
@@ -15,7 +15,6 @@
 		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
 		<PackageTags>Domain events</PackageTags>
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>
-		<PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
 		<IsPackable>true</IsPackable>
 		<Title>Whisper.Outbox.SqlServer</Title>
 		<Description>SqlServer storage for Outbox.</Description>
@@ -26,7 +25,7 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Microsoft.Data.SqlClient" Version="[6.1.1,7.0.0)" />
+		<PackageReference Include="Microsoft.Data.SqlClient" Version="[6.1.8,7.0.0)" />
 	</ItemGroup>
 
 	<ItemGroup>

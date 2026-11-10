@@ -13,7 +13,7 @@ public class MountPatternTests
         var store = DashboardTestHost.CreateStore();
         store.Retry(RecordId, Arg.Any<CancellationToken>()).Returns(true);
         await using var app = await DashboardTestHost.StartAnonymousHost(store, pattern: "/admin/outbox");
-        var client = app.GetTestClient();
+        var client = app.GetDashboardClient();
 
         var page = await client.GetAsync("/admin/outbox");
         var failed = await client.GetAsync("/admin/outbox/api/failed");

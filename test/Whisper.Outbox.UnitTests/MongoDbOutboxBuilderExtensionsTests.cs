@@ -57,6 +57,37 @@ public class MongoDbOutboxBuilderExtensionsTests
     }
 
     [Fact]
+    public void AddMongoDb_RegistersTheWorkerLock()
+    {
+        using var serviceProvider = BuildServiceProvider(o => o.AddMongoDb(Configuration));
+
+        serviceProvider.GetRequiredService<IOutboxWorkerLock>().Should().BeOfType<MongoDbOutboxWorkerLock>();
+    }
+
+    // A provider built on things that only exist during a request or a message cannot be constructed in the outbox
+    // worker's scope. The worker must still get its store, because nothing it does needs the provider.
+    [Fact]
+    public void AddMongoDb_WithASessionProviderThatCannotBeConstructedInThisScope_StillResolvesTheStore()
+    {
+        using var serviceProvider = BuildServiceProvider(o => o.AddMongoDb(Configuration).UseMongoSessionProvider<UnconstructibleSessionProvider>());
+        using var scope = serviceProvider.CreateScope();
+
+        var resolveStore = () => scope.ServiceProvider.GetRequiredService<IOutboxStore>();
+        var resolveProvider = () => scope.ServiceProvider.GetRequiredService<IMongoSessionProvider>();
+
+        resolveStore.Should().NotThrow();
+        resolveProvider.Should().Throw<InvalidOperationException>("the store, not the container, decides when the provider is needed");
+    }
+
+    private sealed class UnconstructibleSessionProvider : IMongoSessionProvider
+    {
+        public UnconstructibleSessionProvider()
+            => throw new InvalidOperationException("This provider needs a request, and there is none in this scope.");
+
+        public IClientSessionHandle? Session => null;
+    }
+
+    [Fact]
     public void AddMongoDb_ResolvesMongoDbOutboxStore()
     {
         using var serviceProvider = BuildServiceProvider(o => o.AddMongoDb(Configuration));

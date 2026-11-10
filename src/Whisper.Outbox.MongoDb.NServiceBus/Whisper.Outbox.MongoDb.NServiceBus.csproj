@@ -6,7 +6,7 @@
 		<Nullable>enable</Nullable>
 
 		<PackageId>Whisper.Outbox.MongoDb.NServiceBus</PackageId>
-		<Version>0.4.3-alpha</Version>
+		<Version>0.5.0-alpha</Version>
 		<Authors>Ken van Grinsven</Authors>
 		<Company>Grinsven Software Solutions</Company>
 
@@ -15,7 +15,6 @@
 		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
 		<PackageTags>Domain events</PackageTags>
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>
-		<PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
 		<IsPackable>true</IsPackable>
 		<Title>Whisper.Outbox.MongoDb.NServiceBus</Title>
 		<Description>Integrate into the Unit-Of-Work of NServiceBus with MongoDb persistence.</Description>
@@ -26,7 +25,7 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="NServiceBus.Storage.MongoDB" Version="[5.0.0,)" />
+		<PackageReference Include="NServiceBus.Storage.MongoDB" Version="[5.0.3,)" />
 	</ItemGroup>
 
 	<ItemGroup>

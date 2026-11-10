@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Net.Http.Headers;
 using Whisper.Outbox.Abstractions;
 using Whisper.Outbox.AspNetCore;
 
@@ -27,6 +28,9 @@ public static class IEndpointRouteBuilderExtensions
     /// under <paramref name="pattern"/>. Every endpoint requires authorization unless
     /// <see cref="WhisperOutboxDashboardOptions.AllowAnonymous"/> is set; every endpoint carries
     /// <see cref="WhisperOutboxEndpointMetadata"/> so hosts can recognize dashboard routes.
+    /// The endpoints that change something also require the
+    /// <see cref="WhisperOutboxDashboardOptions.CommandHeader"/> header unless
+    /// <see cref="WhisperOutboxDashboardOptions.RequireCommandHeader"/> is switched off.
     /// </summary>
     /// <exception cref="InvalidOperationException">
     /// Thrown at map time when no <see cref="IOutboxManagementStore"/> is registered.
@@ -46,7 +50,7 @@ public static class IEndpointRouteBuilderExtensions
         ApplyAuthorizationPosture(group, options);
 
         MapDashboardPage(group);
-        MapManagementApi(group);
+        MapManagementApi(group, options);
 
         return group;
     }
@@ -73,16 +77,49 @@ public static class IEndpointRouteBuilderExtensions
 
     private static void MapDashboardPage(RouteGroupBuilder group)
     {
-        group.MapGet("/", () => Results.Text(DashboardHtml.Value, "text/html", Encoding.UTF8));
+        group.MapGet("/", (HttpContext context) =>
+        {
+            // The page has buttons that change things, so another site must not be able to show it in a frame and
+            // trick someone into clicking them. A header the host has set already is left as it is.
+            var headers = context.Response.Headers;
+            if (!headers.ContainsKey(HeaderNames.XFrameOptions))
+                headers[HeaderNames.XFrameOptions] = "SAMEORIGIN";
+            if (!headers.ContainsKey(HeaderNames.ContentSecurityPolicy))
+                headers[HeaderNames.ContentSecurityPolicy] = "frame-ancestors 'self'";
+
+            return Results.Text(DashboardHtml.Value, "text/html", Encoding.UTF8);
+        });
     }
 
-    private static void MapManagementApi(RouteGroupBuilder group)
+    private static void MapManagementApi(RouteGroupBuilder group, WhisperOutboxDashboardOptions options)
     {
         group.MapGet("/api/failed", GetFailed);
         group.MapGet("/api/records/{id:guid}", GetRecord);
-        group.MapPost("/api/records/{id:guid}/retry", RetryRecord);
-        group.MapPost("/api/failed/retry-all", RetryAll);
-        group.MapDelete("/api/records/{id:guid}", DeleteRecord);
+
+        // The endpoints that change something.
+        var commands = group.MapGroup(string.Empty);
+        if (options.RequireCommandHeader)
+            commands.AddEndpointFilter(RequireCommandHeader);
+
+        commands.MapPost("/api/records/{id:guid}/retry", RetryRecord);
+        commands.MapPost("/api/failed/retry-all", RetryAll);
+        commands.MapDelete("/api/records/{id:guid}", DeleteRecord);
+    }
+
+    // A browser will not put a custom header on a request another site makes it send (a form post, an image, a
+    // fetch without CORS approval), so its presence shows the request came from the dashboard page or from a
+    // client that set it on purpose.
+    private static async ValueTask<object?> RequireCommandHeader(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
+    {
+        if (!context.HttpContext.Request.Headers.ContainsKey(WhisperOutboxDashboardOptions.CommandHeader))
+        {
+            return Results.Problem(
+                title: $"The {WhisperOutboxDashboardOptions.CommandHeader} header is required.",
+                detail: $"Requests that change outbox records must carry the {WhisperOutboxDashboardOptions.CommandHeader} header (with any value).",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        return await next(context);
     }
 
     private static async Task<IResult> GetFailed(

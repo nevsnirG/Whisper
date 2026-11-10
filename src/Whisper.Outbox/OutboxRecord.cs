@@ -6,6 +6,10 @@ public class OutboxRecord
     public DateTimeOffset? DispatchedAtUtc { get; set; }
     public DateTimeOffset? FailedAtUtc { get; set; }
     public int Retries { get; set; }
+    /// <summary>
+    /// The domain event's type as "Namespace.Type, Assembly". Records written by earlier versions also carry the
+    /// assembly version, culture and public key token, which are ignored when the type is loaded.
+    /// </summary>
     public required string AssemblyQualifiedType { get; init; }
     public required string Payload { get; init; }
 

@@ -13,6 +13,13 @@ public class SqlOutboxStoreTests
         ConnectionString = ConnectionString,
     };
 
+    // Loopback port 1 refuses connections immediately - faster and more deterministic
+    // than a fake hostname, which depends on environment DNS behavior.
+    private static readonly SqlOutboxConfiguration UnreachableServer = new()
+    {
+        ConnectionString = "Server=tcp:127.0.0.1,1;Database=test;Connect Timeout=1;Encrypt=False",
+    };
+
     private static readonly DateTimeOffset Timestamp = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
     private static readonly OutboxFailure Failure = new("Simulated failure", Timestamp);
@@ -25,19 +32,21 @@ public class SqlOutboxStoreTests
         ["SetDispatchedAt"] = store => store.SetDispatchedAt(CreateRecord(), Timestamp, CancellationToken.None),
         ["ScheduleRetry"] = store => store.ScheduleRetry(CreateRecord(), Failure, Timestamp, CancellationToken.None),
         ["SetFailedAt"] = store => store.SetFailedAt(CreateRecord(), Failure, CancellationToken.None),
+        ["DeleteDispatchedBefore"] = store => store.DeleteDispatchedBefore(Timestamp, 100, CancellationToken.None),
     };
 
-    public static TheoryData<string> Operations()
+    /// <summary>Storing events: the operations that belong to the host's unit of work.</summary>
+    public static TheoryData<string> StoringOperations() => new() { "Add", "AddBatch" };
+
+    /// <summary>Everything the worker does: reading, marking and cleaning up, outside any unit of work.</summary>
+    public static TheoryData<string> WorkerOperations() => new()
     {
-        var data = new TheoryData<string>();
-        foreach (var operation in OperationMap.Keys)
-            data.Add(operation);
-        return data;
-    }
+        "ReadNextBatch", "SetDispatchedAt", "ScheduleRetry", "SetFailedAt", "DeleteDispatchedBefore",
+    };
 
     [Theory]
-    [MemberData(nameof(Operations))]
-    public async Task Operation_WithConnectionLeaseProvider_DoesNotOpenTheLeasedConnection(string operation)
+    [MemberData(nameof(StoringOperations))]
+    public async Task Storing_WithConnectionLeaseProvider_DoesNotOpenTheLeasedConnection(string operation)
     {
         await using var connection = new SqlConnection(ConnectionString);
         var provider = new StubConnectionLeaseProvider(new ConnectionLease(connection));
@@ -53,8 +62,8 @@ public class SqlOutboxStoreTests
     }
 
     [Theory]
-    [MemberData(nameof(Operations))]
-    public async Task Operation_WithConnectionLeaseProvider_DoesNotDisposeTheLeasedConnection(string operation)
+    [MemberData(nameof(StoringOperations))]
+    public async Task Storing_WithConnectionLeaseProvider_DoesNotDisposeTheLeasedConnection(string operation)
     {
         await using var connection = new SqlConnection(ConnectionString);
         var disposed = false;
@@ -72,8 +81,8 @@ public class SqlOutboxStoreTests
     }
 
     [Theory]
-    [MemberData(nameof(Operations))]
-    public async Task Operation_WithConnectionLeaseProvider_AcquiresExactlyOneLease(string operation)
+    [MemberData(nameof(StoringOperations))]
+    public async Task Storing_WithConnectionLeaseProvider_AcquiresExactlyOneLease(string operation)
     {
         await using var connection = new SqlConnection(ConnectionString);
         var provider = new StubConnectionLeaseProvider(new ConnectionLease(connection));
@@ -85,18 +94,45 @@ public class SqlOutboxStoreTests
         provider.ProvideCallCount.Should().Be(1);
     }
 
+    // A provider returns null in a scope without a unit of work, such as a plain HTTP request next to message handlers.
+    [Theory]
+    [MemberData(nameof(StoringOperations))]
+    public async Task Storing_WhenTheProviderHasNoLease_OpensItsOwnConnection(string operation)
+    {
+        var provider = new StubConnectionLeaseProvider(lease: null);
+        var sut = new SqlOutboxStore(UnreachableServer, provider);
+
+        var act = () => OperationMap[operation](sut);
+
+        // The SqlException comes from the store opening a connection of its own against the unreachable server.
+        await act.Should().ThrowAsync<SqlException>();
+        provider.ProvideCallCount.Should().Be(1);
+    }
+
+    // The worker runs outside any unit of work, so nothing it does goes through the provider: not even a provider
+    // that could not cope with being asked there can stop it.
+    [Theory]
+    [MemberData(nameof(WorkerOperations))]
+    public async Task WorkerOperation_WithConnectionLeaseProvider_NeverAsksIt_AndOpensItsOwnConnection(string operation)
+    {
+        await using var leasedConnection = new SqlConnection(ConnectionString);
+        var provider = new StubConnectionLeaseProvider(new ConnectionLease(leasedConnection));
+        var sut = new SqlOutboxStore(UnreachableServer, provider);
+
+        var act = () => OperationMap[operation](sut);
+
+        // The SqlException comes from the store opening a connection of its own against the unreachable server.
+        // Had it used the (unopened) leased connection, it would have been an InvalidOperationException.
+        await act.Should().ThrowAsync<SqlException>();
+        provider.ProvideCallCount.Should().Be(0);
+    }
+
     [Theory]
     [InlineData("Add")]
     [InlineData("ReadNextBatch")]
     public async Task Operation_WithoutConnectionLeaseProvider_OpensItsOwnConnection(string operation)
     {
-        // Loopback port 1 refuses connections immediately - faster and more deterministic
-        // than a fake hostname, which depends on environment DNS behavior.
-        var configuration = new SqlOutboxConfiguration
-        {
-            ConnectionString = "Server=tcp:127.0.0.1,1;Database=test;Connect Timeout=1;Encrypt=False",
-        };
-        var sut = new SqlOutboxStore(configuration, null);
+        var sut = new SqlOutboxStore(UnreachableServer, null);
 
         var act = () => OperationMap[operation](sut);
 
@@ -114,11 +150,11 @@ public class SqlOutboxStoreTests
         Payload = "{}",
     };
 
-    private sealed class StubConnectionLeaseProvider(ConnectionLease lease) : IConnectionLeaseProvider
+    private sealed class StubConnectionLeaseProvider(ConnectionLease? lease) : IConnectionLeaseProvider
     {
         public int ProvideCallCount { get; private set; }
 
-        public ValueTask<ConnectionLease> Provide(CancellationToken cancellationToken)
+        public ValueTask<ConnectionLease?> Provide(CancellationToken cancellationToken)
         {
             ProvideCallCount++;
             return ValueTask.FromResult(lease);

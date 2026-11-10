@@ -61,6 +61,21 @@ public sealed class SqlOutboxManagementStoreTests : IAsyncLifetime
         newest.LastErrorAtUtc.Should().Be(baseTime.AddMinutes(4));
     }
 
+    // A list shows one line per record, while a full error can be 32,768 characters.
+    [Fact]
+    public async Task GetFailed_ReturnsOnlyTheStartOfALongError_WhileGetReturnsAllOfIt()
+    {
+        var longError = new string('e', OutboxRecordSummary.LastErrorPreviewLength) + " and the rest of the stack trace";
+        var record = await AddFailedRecord(DateTimeOffset.UtcNow, longError);
+
+        var page = await _managementStore.GetFailed(1, 10, CancellationToken.None);
+        var stored = await _managementStore.Get(record.Id, CancellationToken.None);
+
+        page.Records.Should().ContainSingle()
+            .Which.LastError.Should().Be(new string('e', OutboxRecordSummary.LastErrorPreviewLength));
+        stored!.LastError.Should().Be(longError);
+    }
+
     [Fact]
     public async Task GetFailed_ClampsPageAndPageSize()
     {
@@ -328,7 +343,7 @@ SET FailedAtUtc = @failedAt, LastError = N'bulk failure', LastErrorAtUtc = @fail
 
     private sealed class ThrowingConnectionLeaseProvider : IConnectionLeaseProvider
     {
-        public ValueTask<ConnectionLease> Provide(CancellationToken cancellationToken)
+        public ValueTask<ConnectionLease?> Provide(CancellationToken cancellationToken)
             => throw new InvalidOperationException("The management store must never consult the connection lease provider.");
     }
 }

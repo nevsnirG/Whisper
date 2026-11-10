@@ -32,7 +32,7 @@ internal sealed class OutboxDispatcher(IOutboxStore outboxStore,
         {
             Id = uuidProvider.Provide(),
             EnqueuedAtUtc = timeProvider.GetUtcNow(),
-            AssemblyQualifiedType = domainEvent.GetType().AssemblyQualifiedName!,
+            AssemblyQualifiedType = DomainEventTypeName.Of(domainEvent.GetType()),
             Payload = domainEventSerializer.Serialize(domainEvent),
         };
     }

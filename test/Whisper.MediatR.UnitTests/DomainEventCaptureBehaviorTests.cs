@@ -92,6 +92,46 @@ public class DomainEventCaptureBehaviorTests
         await dispatcher.Received(1).Dispatch(Arg.Any<IDomainEvent[]>(), CancellationToken.None);
     }
 
+    [Fact]
+    public async Task Handle_EventRaisedWhileDispatching_ThrowsInsteadOfDroppingIt()
+    {
+        var dispatcher = Substitute.For<IDispatchDomainEvents>();
+        dispatcher.Dispatch(Arg.Any<IDomainEvent[]>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                Whispers.About(new TestEvent("raised-by-an-event-handler"));
+                return Task.CompletedTask;
+            });
+        var sut = new DomainEventCaptureBehavior<TestRequest, string>([dispatcher]);
+
+        var act = () => sut.Handle(new TestRequest(), Next.From(() =>
+        {
+            Whispers.About(new TestEvent("raised-in-handler"));
+            return Task.FromResult("response");
+        }), CancellationToken.None);
+
+        (await act.Should().ThrowAsync<DomainEventRaisedDuringDispatchException>())
+            .Which.DomainEvent.Should().BeOfType<TestEvent>()
+            .Which.Value.Should().Be("raised-by-an-event-handler");
+    }
+
+    [Fact]
+    public async Task Handle_AfterDispatching_EventsCanBeRaisedAgain()
+    {
+        var dispatcher = Substitute.For<IDispatchDomainEvents>();
+        var sut = new DomainEventCaptureBehavior<TestRequest, string>([dispatcher]);
+        using var outerScope = Whispers.CreateScope();
+
+        await sut.Handle(new TestRequest(), Next.From(() =>
+        {
+            Whispers.About(new TestEvent("raised-in-handler"));
+            return Task.FromResult("response");
+        }), CancellationToken.None);
+
+        Whispers.About(new TestEvent("raised-after-the-request"));
+        Whispers.GetAndClearEvents().Should().ContainSingle();
+    }
+
 #if MEDIATR_NEXT_TAKES_CANCELLATION_TOKEN
     // Only meaningful where RequestHandlerDelegate takes a token (MediatR 12.5+); the CI matrix runs it there.
     [Fact]

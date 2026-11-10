@@ -67,7 +67,7 @@ public class RecordEndpointTests
         store.Retry(RecordId, Arg.Any<CancellationToken>()).Returns(true);
         await using var app = await DashboardTestHost.StartAnonymousHost(store);
 
-        var response = await app.GetTestClient().PostAsync($"/whisper/outbox/api/records/{RecordId}/retry", content: null);
+        var response = await app.GetDashboardClient().PostAsync($"/whisper/outbox/api/records/{RecordId}/retry", content: null);
 
         response.StatusCode.Should().Be(HttpStatusCode.NoContent);
         await store.Received(1).Retry(RecordId, Arg.Any<CancellationToken>());
@@ -80,7 +80,7 @@ public class RecordEndpointTests
         store.Retry(RecordId, Arg.Any<CancellationToken>()).Returns(false);
         await using var app = await DashboardTestHost.StartAnonymousHost(store);
 
-        var response = await app.GetTestClient().PostAsync($"/whisper/outbox/api/records/{RecordId}/retry", content: null);
+        var response = await app.GetDashboardClient().PostAsync($"/whisper/outbox/api/records/{RecordId}/retry", content: null);
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
@@ -92,7 +92,7 @@ public class RecordEndpointTests
         store.Delete(RecordId, Arg.Any<CancellationToken>()).Returns(true);
         await using var app = await DashboardTestHost.StartAnonymousHost(store);
 
-        var response = await app.GetTestClient().DeleteAsync($"/whisper/outbox/api/records/{RecordId}");
+        var response = await app.GetDashboardClient().DeleteAsync($"/whisper/outbox/api/records/{RecordId}");
 
         response.StatusCode.Should().Be(HttpStatusCode.NoContent);
         await store.Received(1).Delete(RecordId, Arg.Any<CancellationToken>());
@@ -105,7 +105,7 @@ public class RecordEndpointTests
         store.Delete(RecordId, Arg.Any<CancellationToken>()).Returns(false);
         await using var app = await DashboardTestHost.StartAnonymousHost(store);
 
-        var response = await app.GetTestClient().DeleteAsync($"/whisper/outbox/api/records/{RecordId}");
+        var response = await app.GetDashboardClient().DeleteAsync($"/whisper/outbox/api/records/{RecordId}");
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }

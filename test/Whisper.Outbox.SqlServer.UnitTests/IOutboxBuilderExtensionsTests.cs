@@ -25,6 +25,14 @@ public class IOutboxBuilderExtensionsTests
     }
 
     [Fact]
+    public void AddSqlServer_RegistersTheWorkerLock()
+    {
+        using var serviceProvider = BuildServiceProvider(o => o.AddSqlServer(Configuration));
+
+        serviceProvider.GetRequiredService<IOutboxWorkerLock>().Should().BeOfType<SqlOutboxWorkerLock>();
+    }
+
+    [Fact]
     public void AddSqlServer_ResolvesSqlOutboxStore()
     {
         using var serviceProvider = BuildServiceProvider(o => o.AddSqlServer(Configuration));
@@ -33,6 +41,30 @@ public class IOutboxBuilderExtensionsTests
         var store = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
 
         store.Should().BeOfType<SqlOutboxStore>();
+    }
+
+    // A provider built on things that only exist during a request or a message cannot be constructed in the outbox
+    // worker's scope. The worker must still get its store, because nothing it does needs the provider.
+    [Fact]
+    public void AddSqlServer_WithALeaseProviderThatCannotBeConstructedInThisScope_StillResolvesTheStore()
+    {
+        using var serviceProvider = BuildServiceProvider(o => o.AddSqlServer(Configuration).UseConnectionLeaseProvider<UnconstructibleLeaseProvider>());
+        using var scope = serviceProvider.CreateScope();
+
+        var resolveStore = () => scope.ServiceProvider.GetRequiredService<IOutboxStore>();
+        var resolveProvider = () => scope.ServiceProvider.GetRequiredService<IConnectionLeaseProvider>();
+
+        resolveStore.Should().NotThrow();
+        resolveProvider.Should().Throw<InvalidOperationException>("the store, not the container, decides when the provider is needed");
+    }
+
+    private sealed class UnconstructibleLeaseProvider : IConnectionLeaseProvider
+    {
+        public UnconstructibleLeaseProvider()
+            => throw new InvalidOperationException("This provider needs a request, and there is none in this scope.");
+
+        public ValueTask<ConnectionLease?> Provide(CancellationToken cancellationToken)
+            => ValueTask.FromResult<ConnectionLease?>(null);
     }
 
     [Fact]
@@ -241,13 +273,13 @@ public class IOutboxBuilderExtensionsTests
 
     private sealed class FirstLeaseProvider : IConnectionLeaseProvider
     {
-        public ValueTask<ConnectionLease> Provide(CancellationToken cancellationToken)
+        public ValueTask<ConnectionLease?> Provide(CancellationToken cancellationToken)
             => throw new NotSupportedException("Never invoked by resolution-shape tests.");
     }
 
     private sealed class SecondLeaseProvider : IConnectionLeaseProvider
     {
-        public ValueTask<ConnectionLease> Provide(CancellationToken cancellationToken)
+        public ValueTask<ConnectionLease?> Provide(CancellationToken cancellationToken)
             => throw new NotSupportedException("Never invoked by resolution-shape tests.");
     }
 }

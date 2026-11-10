@@ -117,6 +117,51 @@ public class WhispersTests
         Whispers.Peek().Should().BeEmpty();
     }
 
+    [Fact(DisplayName = "Raising a domain event while domain events are being dispatched throws and names the event.")]
+    public void AboutThrowsWhileDispatching()
+    {
+        using var scope = Whispers.CreateScope();
+        using var dispatching = Whispers.BeginDispatch();
+        var raisedByAHandler = new TestEvent("I was raised by a handler.");
+
+        var act = () => Whispers.About(raisedByAHandler);
+
+        act.Should().Throw<DomainEventRaisedDuringDispatchException>()
+            .Which.DomainEvent.Should().BeSameAs(raisedByAHandler);
+        Whispers.Peek().Should().BeEmpty();
+        Whispers.GetAndClearEvents().Should().BeEmpty();
+    }
+
+    [Fact(DisplayName = "A scope created while dispatching is a new use case and collects events again.")]
+    public void ScopeCreatedWhileDispatchingCollectsEvents()
+    {
+        using var dispatching = Whispers.BeginDispatch();
+
+        using (Whispers.CreateScope())
+        {
+            Whispers.About(new TestEvent("I was raised by a new use case."));
+
+            Whispers.GetAndClearEvents().Should().ContainSingle();
+        }
+
+        var act = () => Whispers.About(new TestEvent("I was raised back in the dispatch."));
+        act.Should().Throw<DomainEventRaisedDuringDispatchException>();
+    }
+
+    [Fact(DisplayName = "Ending the dispatch restores the scope it started in, with the events that scope already held.")]
+    public void EndingTheDispatchRestoresTheSurroundingScope()
+    {
+        using var scope = Whispers.CreateScope();
+        Whispers.About(new TestEvent("I was raised before the dispatch."));
+
+        using (Whispers.BeginDispatch())
+        {
+        }
+
+        Whispers.About(new TestEvent("I was raised after the dispatch."));
+        Whispers.Peek().Should().HaveCount(2);
+    }
+
     [Fact(DisplayName = "Domain events raised inside a scope are not available higher in the synchronous callstack outside of the scope in which they were raised.")]
     public void DomainEventsInScopeAreNotAvailableOutsideOfScope()
     {

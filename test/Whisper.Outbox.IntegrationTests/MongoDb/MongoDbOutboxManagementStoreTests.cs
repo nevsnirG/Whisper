@@ -69,6 +69,47 @@ public sealed class MongoDbOutboxManagementStoreTests : IAsyncLifetime
         newest.LastErrorAtUtc.Should().Be(BaseTime.AddMinutes(4));
     }
 
+    // A list shows one line per record, while a full error can be 32,768 characters.
+    [Fact]
+    public async Task GetFailed_ReturnsOnlyTheStartOfALongError_WhileGetReturnsAllOfIt()
+    {
+        var longError = new string('e', OutboxRecordSummary.LastErrorPreviewLength) + " and the rest of the stack trace";
+        var record = await AddFailedRecord(BaseTime, longError);
+
+        var page = await _managementStore.GetFailed(1, 10, CancellationToken.None);
+        var stored = await _managementStore.Get(record.Id, CancellationToken.None);
+
+        page.Records.Should().ContainSingle()
+            .Which.LastError.Should().Be(new string('e', OutboxRecordSummary.LastErrorPreviewLength));
+        stored!.LastError.Should().Be(longError);
+    }
+
+    // Regression guard: with an index on the failure time alone, MongoDB fetched and sorted every failed record in
+    // memory to return one page, on every refresh of every open dashboard.
+    [Fact]
+    public async Task GetFailed_ReadsOnePageFromTheIndex_WithoutSortingInMemory()
+    {
+        const int pageSize = 10;
+        var failed = Enumerable.Range(0, 300).Select(i =>
+        {
+            var record = NewRecord();
+            record.FailedAtUtc = BaseTime.AddSeconds(i);
+            record.LastError = "broken";
+            return record;
+        });
+        await _typedCollection.InsertManyAsync(failed);
+
+        OutboxFailedPage page = null!;
+        var profiles = await MongoProfiler.Record(_typedCollection.Database, async () =>
+            page = await _managementStore.GetFailed(2, pageSize, CancellationToken.None));
+
+        page.Records.Should().HaveCount(pageSize);
+        var listing = profiles.PagedAggregation();
+        listing.SortedInMemory().Should().BeFalse("the index already holds the failed records in listing order");
+        listing.Plan().Should().StartWith("IXSCAN");
+        listing.DocumentsRead().Should().BeLessThan(50, "only the skipped page and the returned page are read, not all 300 failed records");
+    }
+
     [Fact]
     public async Task GetFailed_ClampsPageAndPageSize()
     {

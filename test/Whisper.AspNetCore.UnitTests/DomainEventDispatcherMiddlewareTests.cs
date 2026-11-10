@@ -85,5 +85,29 @@ public class DomainEventDispatcherMiddlewareTests
         await dispatcher.Received(1).Dispatch(Arg.Any<IDomainEvent[]>(), CancellationToken.None);
     }
 
+    [Fact]
+    public async Task InvokeAsync_EventRaisedWhileDispatching_ThrowsInsteadOfDroppingIt()
+    {
+        var dispatcher = Substitute.For<IDispatchDomainEvents>();
+        dispatcher.Dispatch(Arg.Any<IDomainEvent[]>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                Whispers.About(new TestEvent("raised-by-an-event-handler"));
+                return Task.CompletedTask;
+            });
+        RequestDelegate next = _ =>
+        {
+            Whispers.About(new TestEvent("raised-by-the-endpoint"));
+            return Task.CompletedTask;
+        };
+        var sut = new DomainEventDispatcherMiddleware(next);
+
+        var act = () => sut.InvokeAsync(new DefaultHttpContext(), [dispatcher]);
+
+        (await act.Should().ThrowAsync<DomainEventRaisedDuringDispatchException>())
+            .Which.DomainEvent.Should().BeOfType<TestEvent>()
+            .Which.Value.Should().Be("raised-by-an-event-handler");
+    }
+
     private sealed record TestEvent(string Value) : IDomainEvent;
 }

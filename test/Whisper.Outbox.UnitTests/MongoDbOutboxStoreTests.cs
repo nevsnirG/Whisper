@@ -97,22 +97,23 @@ public sealed class MongoDbOutboxStoreTests : IDisposable
         await _collection.DidNotReceive().UpdateOneAsync(Arg.Any<IClientSessionHandle>(), Arg.Any<FilterDefinition<OutboxRecord>>(), Arg.Any<UpdateDefinition<OutboxRecord>>(), Arg.Any<UpdateOptions>(), Arg.Any<CancellationToken>());
     }
 
+    // The worker runs outside any unit of work, so its updates never join a session, whatever the provider holds.
     [Fact]
-    public async Task SetDispatchedAt_WithActiveSession_UpdatesWithThatSession()
+    public async Task SetDispatchedAt_WithActiveSession_StillUpdatesWithoutIt()
     {
         var record = CreateRecord();
-        var session = Substitute.For<IClientSessionHandle>();
-        var sut = new MongoDbOutboxStore(_collection, ProviderWithSession(session));
+        var provider = ProviderWithSession(Substitute.For<IClientSessionHandle>());
+        var sut = new MongoDbOutboxStore(_collection, provider);
 
         await sut.SetDispatchedAt(record, Timestamp, _cts.Token);
 
         await _collection.Received(1).UpdateOneAsync(
-            Arg.Is(session),
             Arg.Any<FilterDefinition<OutboxRecord>>(),
             Arg.Any<UpdateDefinition<OutboxRecord>>(),
             Arg.Any<UpdateOptions>(),
             Arg.Is(_cts.Token));
-        await _collection.DidNotReceive().UpdateOneAsync(Arg.Any<FilterDefinition<OutboxRecord>>(), Arg.Any<UpdateDefinition<OutboxRecord>>(), Arg.Any<UpdateOptions>(), Arg.Any<CancellationToken>());
+        await _collection.DidNotReceive().UpdateOneAsync(Arg.Any<IClientSessionHandle>(), Arg.Any<FilterDefinition<OutboxRecord>>(), Arg.Any<UpdateDefinition<OutboxRecord>>(), Arg.Any<UpdateOptions>(), Arg.Any<CancellationToken>());
+        _ = provider.DidNotReceive().Session;
     }
 
     [Fact]
@@ -131,22 +132,23 @@ public sealed class MongoDbOutboxStoreTests : IDisposable
         await _collection.DidNotReceive().UpdateOneAsync(Arg.Any<IClientSessionHandle>(), Arg.Any<FilterDefinition<OutboxRecord>>(), Arg.Any<UpdateDefinition<OutboxRecord>>(), Arg.Any<UpdateOptions>(), Arg.Any<CancellationToken>());
     }
 
+    // The worker runs outside any unit of work, so its updates never join a session, whatever the provider holds.
     [Fact]
-    public async Task ScheduleRetry_WithActiveSession_UpdatesWithThatSession()
+    public async Task ScheduleRetry_WithActiveSession_StillUpdatesWithoutIt()
     {
         var record = CreateRecord();
-        var session = Substitute.For<IClientSessionHandle>();
-        var sut = new MongoDbOutboxStore(_collection, ProviderWithSession(session));
+        var provider = ProviderWithSession(Substitute.For<IClientSessionHandle>());
+        var sut = new MongoDbOutboxStore(_collection, provider);
 
         await sut.ScheduleRetry(record, CreateFailure(), null, _cts.Token);
 
         await _collection.Received(1).UpdateOneAsync(
-            Arg.Is(session),
             Arg.Any<FilterDefinition<OutboxRecord>>(),
             Arg.Any<UpdateDefinition<OutboxRecord>>(),
             Arg.Any<UpdateOptions>(),
             Arg.Is(_cts.Token));
-        await _collection.DidNotReceive().UpdateOneAsync(Arg.Any<FilterDefinition<OutboxRecord>>(), Arg.Any<UpdateDefinition<OutboxRecord>>(), Arg.Any<UpdateOptions>(), Arg.Any<CancellationToken>());
+        await _collection.DidNotReceive().UpdateOneAsync(Arg.Any<IClientSessionHandle>(), Arg.Any<FilterDefinition<OutboxRecord>>(), Arg.Any<UpdateDefinition<OutboxRecord>>(), Arg.Any<UpdateOptions>(), Arg.Any<CancellationToken>());
+        _ = provider.DidNotReceive().Session;
     }
 
     [Fact]
@@ -165,22 +167,23 @@ public sealed class MongoDbOutboxStoreTests : IDisposable
         await _collection.DidNotReceive().UpdateOneAsync(Arg.Any<IClientSessionHandle>(), Arg.Any<FilterDefinition<OutboxRecord>>(), Arg.Any<UpdateDefinition<OutboxRecord>>(), Arg.Any<UpdateOptions>(), Arg.Any<CancellationToken>());
     }
 
+    // The worker runs outside any unit of work, so its updates never join a session, whatever the provider holds.
     [Fact]
-    public async Task SetFailedAt_WithActiveSession_UpdatesWithThatSession()
+    public async Task SetFailedAt_WithActiveSession_StillUpdatesWithoutIt()
     {
         var record = CreateRecord();
-        var session = Substitute.For<IClientSessionHandle>();
-        var sut = new MongoDbOutboxStore(_collection, ProviderWithSession(session));
+        var provider = ProviderWithSession(Substitute.For<IClientSessionHandle>());
+        var sut = new MongoDbOutboxStore(_collection, provider);
 
         await sut.SetFailedAt(record, CreateFailure(), _cts.Token);
 
         await _collection.Received(1).UpdateOneAsync(
-            Arg.Is(session),
             Arg.Any<FilterDefinition<OutboxRecord>>(),
             Arg.Any<UpdateDefinition<OutboxRecord>>(),
             Arg.Any<UpdateOptions>(),
             Arg.Is(_cts.Token));
-        await _collection.DidNotReceive().UpdateOneAsync(Arg.Any<FilterDefinition<OutboxRecord>>(), Arg.Any<UpdateDefinition<OutboxRecord>>(), Arg.Any<UpdateOptions>(), Arg.Any<CancellationToken>());
+        await _collection.DidNotReceive().UpdateOneAsync(Arg.Any<IClientSessionHandle>(), Arg.Any<FilterDefinition<OutboxRecord>>(), Arg.Any<UpdateDefinition<OutboxRecord>>(), Arg.Any<UpdateOptions>(), Arg.Any<CancellationToken>());
+        _ = provider.DidNotReceive().Session;
     }
 
     [Fact]

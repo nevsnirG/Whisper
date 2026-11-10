@@ -10,7 +10,11 @@ internal sealed class RecoverabilityPolicy(OutboxRecoverabilityOptions options, 
 {
     public bool IsUnrecoverable(Exception exception)
     {
-        return MatchesUnrecoverableType(exception) || MatchesUnrecoverablePredicate(exception);
+        // Raising a domain event from a handler is a programming error: every retry would run the handler up to
+        // the same point and fail the same way.
+        return exception is DomainEventRaisedDuringDispatchException
+            || MatchesUnrecoverableType(exception)
+            || MatchesUnrecoverablePredicate(exception);
     }
 
     /// <summary>

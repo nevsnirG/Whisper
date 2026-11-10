@@ -27,7 +27,7 @@ internal sealed class SqlOutboxManagementStore(SqlOutboxConfiguration sqlOutboxC
         var sql = $@"
 SELECT COUNT_BIG(*) FROM {QualifiedTableName()} WHERE FailedAtUtc IS NOT NULL;
 
-SELECT Id, EnqueuedAtUtc, FailedAtUtc, Retries, AssemblyQualifiedType, LastError, LastErrorAtUtc
+SELECT Id, EnqueuedAtUtc, FailedAtUtc, Retries, AssemblyQualifiedType, LEFT(LastError, @errorPreviewLength), LastErrorAtUtc
 FROM {QualifiedTableName()}
 WHERE FailedAtUtc IS NOT NULL
 ORDER BY FailedAtUtc DESC, Id ASC
@@ -35,6 +35,7 @@ OFFSET @offset ROWS FETCH NEXT @fetch ROWS ONLY;";
 
         await using var connection = await OpenConnection(cancellationToken);
         using var cmd = new SqlCommand(sql, connection);
+        cmd.Parameters.Add(new SqlParameter("@errorPreviewLength", SqlDbType.Int) { Value = OutboxRecordSummary.LastErrorPreviewLength });
         cmd.Parameters.Add(new SqlParameter("@offset", SqlDbType.Int) { Value = offset });
         cmd.Parameters.Add(new SqlParameter("@fetch", SqlDbType.Int) { Value = pageSize });
 

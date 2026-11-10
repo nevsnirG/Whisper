@@ -27,7 +27,7 @@ public class OutboxDispatcherTests
          && or.EnqueuedAtUtc == timeProvider.GetUtcNow()
          && or.DispatchedAtUtc == null
          && or.Id == guid
-         && or.AssemblyQualifiedType == typeof(TestEvent).AssemblyQualifiedName), CancellationToken.None);
+         && or.AssemblyQualifiedType == "Whisper.Outbox.UnitTests.OutboxDispatcherTests+TestEvent, Whisper.Outbox.UnitTests"), CancellationToken.None);
     }
 
     [Fact]

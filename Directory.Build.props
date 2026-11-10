@@ -1,0 +1,12 @@
+<Project>
+	<PropertyGroup>
+		<NoWarn>IDE0130,IDE0079</NoWarn>
+	</PropertyGroup>
+
+	<!-- The packages ship their XML documentation, so the doc comments show up in IntelliSense.
+	     CS1591 (a public member without a doc comment) is not enforced. -->
+	<PropertyGroup Condition="!$(MSBuildProjectName.EndsWith('Tests'))">
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<NoWarn>$(NoWarn),CS1591</NoWarn>
+	</PropertyGroup>
+</Project>
